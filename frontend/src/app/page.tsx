@@ -196,12 +196,25 @@ export default function Home() {
       <div>
         <header className="border-b border-[var(--stroke)] bg-white/80 px-6 py-2 backdrop-blur 2xl:px-10">
           <div className="flex w-full items-center justify-between">
-            <p className="text-xs font-medium text-[var(--gray-text)]">
-              Signed in as{" "}
-              <span className="font-semibold text-[var(--navy-dark)]">
-                {user?.display_name || user?.username || "user"}
-              </span>
-            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setView({ type: "dashboard" })}
+                className="flex items-center gap-1 rounded-full border border-[var(--stroke)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:border-[var(--gray-text)] hover:text-[var(--navy-dark)]"
+                aria-label="Back to boards"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+                Boards
+              </button>
+              <p className="text-xs font-medium text-[var(--gray-text)]">
+                Signed in as{" "}
+                <span className="font-semibold text-[var(--navy-dark)]">
+                  {user?.display_name || user?.username || "user"}
+                </span>
+              </p>
+            </div>
             <button
               type="button"
               onClick={handleLogout}
