@@ -6,7 +6,9 @@
       "Bash(E2E_BASE_URL=http://127.0.0.1:8000 npx playwright:*)",
       "Bash(docker compose:*)",
       "Bash(npm run:*)",
-      "Bash(npx playwright:*)"
+      "Bash(npx playwright:*)",
+      "Bash(uv sync:*)",
+      "Bash(npx vitest:*)"
     ]
   }
 }
