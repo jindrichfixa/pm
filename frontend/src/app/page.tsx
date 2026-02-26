@@ -103,14 +103,19 @@ export default function Home() {
 
   return (
     <div>
-      <header className="border-b border-[var(--stroke)] bg-white/80 px-6 py-3 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1500px] items-center justify-between">
-          <p className="text-sm font-semibold text-[var(--navy-dark)]">Signed in as user</p>
+      <header className="border-b border-[var(--stroke)] bg-white/80 px-6 py-2 backdrop-blur 2xl:px-10">
+        <div className="flex w-full items-center justify-between">
+          <p className="text-xs font-medium text-[var(--gray-text)]">Signed in as <span className="font-semibold text-[var(--navy-dark)]">user</span></p>
           <button
             type="button"
             onClick={handleLogout}
-            className="rounded-full border border-[var(--stroke)] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:text-[var(--navy-dark)]"
+            className="flex items-center gap-1.5 rounded-full border border-[var(--stroke)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:border-[var(--gray-text)] hover:text-[var(--navy-dark)]"
           >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
             Log out
           </button>
         </div>
