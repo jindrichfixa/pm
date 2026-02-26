@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Project Management MVP: a Kanban board web app with AI chat sidebar. Single-page app with login gate, drag-and-drop card management, and AI-driven board updates via OpenRouter.
+Project Management application: a multi-board Kanban web app with AI chat sidebar. Features user registration/login (JWT auth), multiple boards per user, drag-and-drop card management with priority/due-date/label fields, and AI-driven board updates via OpenRouter.
 
 ## Architecture
 
@@ -16,25 +16,47 @@ Project Management MVP: a Kanban board web app with AI chat sidebar. Single-page
 **Runtime flow:** Docker builds frontend static export, copies it to `backend/static/`, then runs FastAPI on port 8000 serving both API and static files. In development, frontend runs on port 3000 via Next dev server with API calls proxied or pointed at backend separately.
 
 **Key backend files:**
-- `backend/main.py` -- FastAPI app, all route handlers, Pydantic models
-- `backend/db.py` -- SQLite helpers, schema init, board/chat CRUD, `DEFAULT_BOARD`
+- `backend/main.py` -- FastAPI app, all route handlers, Pydantic models, JWT auth middleware
+- `backend/db.py` -- SQLite helpers, schema init, user/board/chat CRUD, `DEFAULT_BOARD`
+- `backend/auth.py` -- JWT token creation/verification (PyJWT + bcrypt)
 - `backend/ai.py` -- OpenRouter client, structured output parsing
 
 **Key frontend files:**
-- `frontend/src/app/page.tsx` -- Login gate + board render
-- `frontend/src/components/KanbanBoard.tsx` -- Main board with drag-and-drop
+- `frontend/src/app/page.tsx` -- Login/register gate + board dashboard + board view routing
+- `frontend/src/components/BoardDashboard.tsx` -- Board list, create, delete
+- `frontend/src/components/KanbanBoard.tsx` -- Main board with drag-and-drop (takes boardId prop)
+- `frontend/src/components/KanbanCard.tsx` -- Card with inline editing, priority, due date, labels
 - `frontend/src/components/AiSidebar.tsx` -- Chat sidebar
-- `frontend/src/lib/boardApi.ts` -- API client (fetchBoard, saveBoard, sendChatMessage)
-- `frontend/src/lib/auth.ts` -- Hardcoded MVP auth (user/password), localStorage session
+- `frontend/src/lib/boardApi.ts` -- API client (auth, board CRUD, chat)
+- `frontend/src/lib/auth.ts` -- JWT token/user storage in localStorage
+
+**Auth flow:**
+- `POST /api/auth/register` -- create account, returns JWT + user object
+- `POST /api/auth/login` -- authenticate, returns JWT + user object
+- `GET /api/auth/me` -- get current user (requires Bearer token)
+- All `/api/boards/*` and `/api/chat` endpoints require `Authorization: Bearer <token>` header
+- Passwords hashed with bcrypt; JWT uses HS256 with `PM_JWT_SECRET` env var
 
 **API endpoints:**
 - `GET /health` -- health check
-- `GET /api/board` -- retrieve board JSON
-- `PUT /api/board` -- update board JSON (validates fixed five-column structure and card referential integrity)
-- `POST /api/chat` -- AI chat with board context and optional board_update (optimistic concurrency via version column)
+- `POST /api/auth/register` -- user registration
+- `POST /api/auth/login` -- user login
+- `GET /api/auth/me` -- current user info
+- `GET /api/boards` -- list user's boards
+- `POST /api/boards` -- create new board
+- `GET /api/boards/:id` -- get board with data
+- `PUT /api/boards/:id` -- update board data (validates structure)
+- `PATCH /api/boards/:id/meta` -- update board name/description
+- `DELETE /api/boards/:id` -- delete board
+- `POST /api/boards/:id/chat` -- AI chat with board context
 - `POST /api/ai/check` -- simple AI prompt check
+- `GET /api/board` -- legacy: get first board (requires auth)
+- `PUT /api/board` -- legacy: update first board (requires auth)
+- `POST /api/chat` -- legacy: AI chat on first board (requires auth)
 
-**Board constraint:** The board always has exactly five fixed columns (`col-backlog`, `col-discovery`, `col-progress`, `col-review`, `col-done`). Backend rejects updates that alter this structure. Pydantic models enforce size limits on all string fields and list sizes.
+**Board constraint:** Each board has exactly five fixed columns (`col-backlog`, `col-discovery`, `col-progress`, `col-review`, `col-done`). Backend rejects updates that alter this structure. Pydantic models enforce size limits on all string fields and list sizes.
+
+**Card fields:** `id`, `title`, `details`, `priority` (optional: low/medium/high/critical), `due_date` (optional: ISO date string), `labels` (optional: list of strings).
 
 ## Commands
 
@@ -107,8 +129,9 @@ Cross-platform scripts are in `scripts/` (PowerShell for Windows, bash for Mac/L
 - `OPENROUTER_API_KEY` in `.env` at project root (loaded via compose.yaml `env_file`). See `.env.example`.
 - `PM_DB_PATH` -- override SQLite database path (default: `backend/data/app.db`). Used by test conftest.py to isolate test db.
 - `PM_CORS_ORIGINS` -- comma-separated allowed origins for CORS (e.g., `http://localhost:3000` for dev)
+- `PM_JWT_SECRET` -- JWT signing secret (default: dev secret, must be set in production)
 - AI model: `openai/gpt-oss-120b`
-- MVP login credentials: `user` / `password`
+- Demo login credentials: `user` / `password`
 
 
 ## DETAILED PLAN

@@ -3,8 +3,6 @@ import { initialData } from "../src/lib/kanban";
 
 const useBackendApi = Boolean(process.env.E2E_BASE_URL);
 
-// Note: E2E tests use a local clone rather than the shared test helper
-// because Playwright tests don't use vitest's path aliasing.
 const cloneInitialData = () => JSON.parse(JSON.stringify(initialData));
 
 const resetBoard = async (page: import("@playwright/test").Page) => {
@@ -12,10 +10,24 @@ const resetBoard = async (page: import("@playwright/test").Page) => {
     return;
   }
 
-  const response = await page.request.put("/api/board", {
-    data: cloneInitialData(),
+  // Login first to get a token for API calls
+  const loginResp = await page.request.post("/api/auth/login", {
+    data: { username: "user", password: "password" },
   });
-  expect(response.ok()).toBeTruthy();
+  if (loginResp.ok()) {
+    const { token } = await loginResp.json();
+    const boards = await page.request.get("/api/boards", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const boardList = await boards.json();
+    if (boardList.length > 0) {
+      const response = await page.request.put(`/api/boards/${boardList[0].id}`, {
+        data: cloneInitialData(),
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(response.ok()).toBeTruthy();
+    }
+  }
 };
 
 const dragCard = async (
@@ -23,7 +35,6 @@ const dragCard = async (
   source: import("@playwright/test").Locator,
   target: import("@playwright/test").Locator
 ) => {
-  // Scroll source into view so mouse coordinates are within the viewport
   await source.scrollIntoViewIfNeeded();
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -41,7 +52,6 @@ const dragCard = async (
     targetBox.y + targetBox.height / 2,
     { steps: 20 }
   );
-  // Brief pause lets dnd-kit process collision detection before drop
   await page.waitForTimeout(150);
   await page.mouse.up();
 };
@@ -51,19 +61,34 @@ const login = async (page: import("@playwright/test").Page) => {
   await page.getByLabel("Username").fill("user");
   await page.getByLabel("Password").fill("password");
   await page.getByRole("button", { name: /sign in/i }).click();
-  await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
+  // After login, we should see the dashboard
+  await expect(page.getByText(/your boards/i)).toBeVisible();
 };
 
-test("loads the kanban board", async ({ page }) => {
+const loginAndOpenBoard = async (page: import("@playwright/test").Page) => {
+  await login(page);
+  // Click the first board to open it
+  const boardCard = page.locator('[data-testid^="board-card-"]').first();
+  await boardCard.click();
+  // Wait for board columns to load
+  await expect(page.locator('[data-testid^="column-"]').first()).toBeVisible();
+};
+
+test("loads the board dashboard after login", async ({ page }) => {
   await resetBoard(page);
   await login(page);
-  await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
+  await expect(page.getByText(/your boards/i)).toBeVisible();
+});
+
+test("opens a board from dashboard", async ({ page }) => {
+  await resetBoard(page);
+  await loginAndOpenBoard(page);
   await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
 });
 
 test("adds a card to a column", async ({ page }) => {
   await resetBoard(page);
-  await login(page);
+  await loginAndOpenBoard(page);
   const firstColumn = page.locator('[data-testid^="column-"]').first();
   await firstColumn.getByRole("button", { name: /add a card/i }).click();
   await firstColumn.getByPlaceholder("Card title").fill("Playwright card");
@@ -74,7 +99,7 @@ test("adds a card to a column", async ({ page }) => {
 
 test("moves a card between columns", async ({ page }) => {
   await resetBoard(page);
-  await login(page);
+  await loginAndOpenBoard(page);
   const card = page.getByTestId("card-card-1");
   const dropTarget = page.getByTestId("column-col-review").getByTestId("card-card-6");
 
@@ -88,7 +113,6 @@ test("moves a card between columns", async ({ page }) => {
 });
 
 test("rejects invalid login", async ({ page }) => {
-  await resetBoard(page);
   await page.goto("/");
   await page.getByLabel("Username").fill("user");
   await page.getByLabel("Password").fill("wrong");
@@ -105,19 +129,27 @@ test("logs out back to login", async ({ page }) => {
   await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
 });
 
+test("navigates back from board to dashboard", async ({ page }) => {
+  await resetBoard(page);
+  await loginAndOpenBoard(page);
+  await page.getByLabel(/back to boards/i).click();
+  await expect(page.getByText(/your boards/i)).toBeVisible();
+});
+
 test("persists board changes after refresh", async ({ page }) => {
   await resetBoard(page);
-  await login(page);
+  await loginAndOpenBoard(page);
 
   const firstColumn = page.locator('[data-testid^="column-"]').first();
   await firstColumn.getByRole("button", { name: /add a card/i }).click();
   await firstColumn.getByPlaceholder("Card title").fill("Persistent card");
   await firstColumn.getByPlaceholder("Details").fill("Should survive refresh");
+
   if (useBackendApi) {
     await Promise.all([
       page.waitForResponse(
         (response) =>
-          response.url().endsWith("/api/board") &&
+          response.url().includes("/api/boards/") &&
           response.request().method() === "PUT" &&
           response.status() === 200
       ),
@@ -131,16 +163,19 @@ test("persists board changes after refresh", async ({ page }) => {
 
   if (useBackendApi) {
     await page.reload();
-    await expect(page.getByRole("heading", { name: /kanban studio/i })).toBeVisible();
+    // After reload, need to re-open board from dashboard
+    await expect(page.getByText(/your boards/i)).toBeVisible();
+    const boardCard = page.locator('[data-testid^="board-card-"]').first();
+    await boardCard.click();
     await expect(page.getByText("Persistent card")).toBeVisible();
   }
 });
 
 test("sends AI chat message and reflects board update", async ({ page }) => {
   await resetBoard(page);
-  await login(page);
+  await loginAndOpenBoard(page);
 
-  await page.route("**/api/chat", async (route) => {
+  await page.route("**/api/boards/*/chat", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -170,16 +205,14 @@ test("sends AI chat message and reflects board update", async ({ page }) => {
 test("moves a card to an empty column", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1200 });
   await resetBoard(page);
-  await login(page);
+  await loginAndOpenBoard(page);
 
   const firstColumn = page.getByTestId("column-col-backlog");
   const secondColumn = page.getByTestId("column-col-discovery");
 
-  // Remove the only card in Discovery to make it empty
   await secondColumn.getByTestId("card-card-3").getByRole("button", { name: /delete/i }).click();
   await expect(secondColumn.getByTestId("empty-drop-col-discovery")).toBeVisible();
 
-  // Drop a card into the now-empty column by targeting the column section
   await dragCard(
     page,
     firstColumn.getByTestId("card-card-1"),

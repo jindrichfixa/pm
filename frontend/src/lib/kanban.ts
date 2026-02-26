@@ -2,6 +2,9 @@ export type Card = {
   id: string;
   title: string;
   details: string;
+  priority?: string | null;
+  due_date?: string | null;
+  labels?: string[];
 };
 
 export type Column = {

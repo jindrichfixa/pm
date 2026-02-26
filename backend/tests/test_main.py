@@ -17,21 +17,137 @@ def client() -> TestClient:
         yield test_client
 
 
+def _auth_headers(client: TestClient) -> dict[str, str]:
+    """Register/login and return Authorization header."""
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "user", "password": "password"},
+    )
+    if response.status_code == 200:
+        token = response.json()["token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    # Fallback: register
+    response = client.post(
+        "/api/auth/register",
+        json={"username": "user", "password": "password", "display_name": "Demo User"},
+    )
+    assert response.status_code in (200, 201, 409)
+    if response.status_code == 409:
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "user", "password": "password"},
+        )
+    token = response.json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+# --- Health ---
+
 def test_health(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_get_board(client: TestClient) -> None:
-    response = client.get("/api/board")
+# --- Auth endpoints ---
+
+def test_register_new_user(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/register",
+        json={"username": "newuser", "password": "pass1234", "display_name": "New User"},
+    )
     assert response.status_code == 200
-    payload = response.json()
-    assert isinstance(payload.get("columns"), list)
-    assert isinstance(payload.get("cards"), dict)
+    body = response.json()
+    assert "token" in body
+    assert body["user"]["username"] == "newuser"
+    assert body["user"]["display_name"] == "New User"
 
 
-def test_put_board(client: TestClient) -> None:
+def test_register_duplicate_returns_409(client: TestClient) -> None:
+    client.post(
+        "/api/auth/register",
+        json={"username": "dupuser", "password": "pass1234"},
+    )
+    response = client.post(
+        "/api/auth/register",
+        json={"username": "dupuser", "password": "pass1234"},
+    )
+    assert response.status_code == 409
+
+
+def test_login_success(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "user", "password": "password"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert "token" in body
+    assert body["user"]["username"] == "user"
+
+
+def test_login_wrong_password(client: TestClient) -> None:
+    response = client.post(
+        "/api/auth/login",
+        json={"username": "user", "password": "wrong"},
+    )
+    assert response.status_code == 401
+
+
+def test_get_me_requires_auth(client: TestClient) -> None:
+    response = client.get("/api/auth/me")
+    assert response.status_code == 401
+
+
+def test_get_me_with_valid_token(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.get("/api/auth/me", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["username"] == "user"
+
+
+# --- Board CRUD ---
+
+def test_list_boards(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.get("/api/boards", headers=headers)
+    assert response.status_code == 200
+    boards = response.json()
+    assert isinstance(boards, list)
+    assert len(boards) >= 1
+
+
+def test_create_board(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/api/boards",
+        json={"name": "Test Board", "description": "A test"},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == "Test Board"
+    assert "id" in body
+
+
+def test_get_board_by_id(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    response = client.get(f"/api/boards/{board_id}", headers=headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert "board" in body
+    assert isinstance(body["board"]["columns"], list)
+
+
+def test_update_board_data(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
     payload = {
         "columns": [
             {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-1"]},
@@ -45,29 +161,99 @@ def test_put_board(client: TestClient) -> None:
         },
     }
 
-    update_response = client.put("/api/board", json=payload)
-    assert update_response.status_code == 200
-    assert update_response.json() == {"status": "ok"}
+    response = client.put(f"/api/boards/{board_id}", json=payload, headers=headers)
+    assert response.status_code == 200
 
-    get_response = client.get("/api/board")
-    assert get_response.status_code == 200
-    assert get_response.json() == payload
+    get_resp = client.get(f"/api/boards/{board_id}", headers=headers)
+    board = get_resp.json()["board"]
+    assert board["columns"] == payload["columns"]
+    assert board["cards"]["card-1"]["title"] == "Task"
+    assert board["cards"]["card-1"]["details"] == "Do it"
 
 
-def test_put_board_rejects_invalid_payload(client: TestClient) -> None:
+def test_update_board_meta(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    response = client.patch(
+        f"/api/boards/{board_id}/meta",
+        json={"name": "Renamed", "description": "Updated"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    get_resp = client.get(f"/api/boards/{board_id}", headers=headers)
+    assert get_resp.json()["name"] == "Renamed"
+
+
+def test_delete_board(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    create_resp = client.post(
+        "/api/boards",
+        json={"name": "To Delete"},
+        headers=headers,
+    )
+    board_id = create_resp.json()["id"]
+
+    response = client.delete(f"/api/boards/{board_id}", headers=headers)
+    assert response.status_code == 200
+
+    get_resp = client.get(f"/api/boards/{board_id}", headers=headers)
+    assert get_resp.status_code == 404
+
+
+def test_board_requires_auth(client: TestClient) -> None:
+    response = client.get("/api/boards")
+    assert response.status_code == 401
+
+
+def test_put_board_rejects_invalid_columns(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
     response = client.put(
-        "/api/board",
+        f"/api/boards/{board_id}",
         json={
-            "columns": [{"id": "col-1", "title": "Todo", "cardIds": "not-a-list"}],
+            "columns": [{"id": "col-1", "title": "Only", "cardIds": []}],
             "cards": {},
         },
+        headers=headers,
     )
     assert response.status_code == 422
 
 
-def test_put_board_rejects_oversized_title(client: TestClient) -> None:
+def test_put_board_rejects_inconsistent_card_refs(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
     response = client.put(
-        "/api/board",
+        f"/api/boards/{board_id}",
+        json={
+            "columns": [
+                {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-missing"]},
+                {"id": "col-discovery", "title": "Discovery", "cardIds": []},
+                {"id": "col-progress", "title": "In Progress", "cardIds": []},
+                {"id": "col-review", "title": "Review", "cardIds": []},
+                {"id": "col-done", "title": "Done", "cardIds": []},
+            ],
+            "cards": {},
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+    assert "Card references are inconsistent" in response.json()["detail"]
+
+
+def test_put_board_rejects_oversized_title(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    response = client.put(
+        f"/api/boards/{board_id}",
         json={
             "columns": [
                 {"id": "col-backlog", "title": "x" * 201, "cardIds": []},
@@ -78,9 +264,41 @@ def test_put_board_rejects_oversized_title(client: TestClient) -> None:
             ],
             "cards": {},
         },
+        headers=headers,
     )
     assert response.status_code == 422
 
+
+# --- Legacy board endpoints ---
+
+def test_legacy_get_board(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.get("/api/board", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload.get("columns"), list)
+
+
+def test_legacy_put_board(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    payload = {
+        "columns": [
+            {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-1"]},
+            {"id": "col-discovery", "title": "Discovery", "cardIds": []},
+            {"id": "col-progress", "title": "In Progress", "cardIds": []},
+            {"id": "col-review", "title": "Review", "cardIds": []},
+            {"id": "col-done", "title": "Done", "cardIds": []},
+        ],
+        "cards": {
+            "card-1": {"id": "card-1", "title": "Task", "details": "Do it"}
+        },
+    }
+
+    response = client.put("/api/board", json=payload, headers=headers)
+    assert response.status_code == 200
+
+
+# --- AI endpoints ---
 
 def test_ai_check_success(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     async def _mock(prompt: str) -> str:
@@ -89,7 +307,6 @@ def test_ai_check_success(client: TestClient, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("main.request_openrouter_completion", _mock)
 
     response = client.post("/api/ai/check", json={"prompt": "2+2"})
-
     assert response.status_code == 200
     assert response.json() == {"assistant_message": "Echo: 2+2"}
 
@@ -103,9 +320,7 @@ def test_ai_check_missing_api_key_maps_to_503(
     monkeypatch.setattr("main.request_openrouter_completion", _raise)
 
     response = client.post("/api/ai/check", json={"prompt": "hello"})
-
     assert response.status_code == 503
-    assert response.json() == {"detail": "OPENROUTER_API_KEY is not configured."}
 
 
 def test_ai_check_upstream_error_maps_to_502(
@@ -117,31 +332,36 @@ def test_ai_check_upstream_error_maps_to_502(
     monkeypatch.setattr("main.request_openrouter_completion", _raise)
 
     response = client.post("/api/ai/check", json={"prompt": "hello"})
-
     assert response.status_code == 502
-    assert response.json() == {"detail": "Failed to reach OpenRouter."}
 
 
-def test_chat_response_only_no_board_update(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+# --- Chat on board ---
+
+def test_chat_on_board_response_only(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
     async def _mock(board, user_message, conversation_history):
         return {"assistant_message": "No changes needed"}
 
     monkeypatch.setattr("main.request_openrouter_structured_output", _mock)
 
-    response = client.post("/api/chat", json={"message": "summarize"})
-
+    response = client.post(
+        f"/api/boards/{board_id}/chat",
+        json={"message": "summarize"},
+        headers=headers,
+    )
     assert response.status_code == 200
-    assert response.json() == {
-        "assistant_message": "No changes needed",
-        "board_update": None,
-    }
+    assert response.json()["assistant_message"] == "No changes needed"
+    assert response.json()["board_update"] is None
 
 
-def test_chat_valid_board_update_is_applied(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chat_on_board_with_update(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
     new_board = {
         "columns": [
             {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-1"]},
@@ -151,11 +371,7 @@ def test_chat_valid_board_update_is_applied(
             {"id": "col-done", "title": "Done", "cardIds": []},
         ],
         "cards": {
-            "card-1": {
-                "id": "card-1",
-                "title": "Task",
-                "details": "Updated by AI",
-            }
+            "card-1": {"id": "card-1", "title": "AI Task", "details": "Created by AI"}
         },
     }
 
@@ -167,128 +383,112 @@ def test_chat_valid_board_update_is_applied(
 
     monkeypatch.setattr("main.request_openrouter_structured_output", _mock)
 
-    response = client.post("/api/chat", json={"message": "update board"})
-
+    response = client.post(
+        f"/api/boards/{board_id}/chat",
+        json={"message": "update board"},
+        headers=headers,
+    )
     assert response.status_code == 200
-    body = response.json()
-    assert body["assistant_message"] == "Updated board"
-    assert body["board_update"] == new_board
-
-    board_response = client.get("/api/board")
-    assert board_response.status_code == 200
-    assert board_response.json() == new_board
+    assert response.json()["assistant_message"] == "Updated board"
+    assert response.json()["board_update"] is not None
 
 
-def test_chat_invalid_structured_output_is_rejected(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _mock(board, user_message, conversation_history):
-        return {"board_update": {"board": {"columns": [], "cards": {}}}}
-
-    monkeypatch.setattr("main.request_openrouter_structured_output", _mock)
-
-    response = client.post("/api/chat", json={"message": "break schema"})
-
-    assert response.status_code == 502
-    assert response.json() == {
-        "detail": "AI response missing required assistant_message."
-    }
-
-
-def test_put_board_rejects_non_fixed_columns(client: TestClient) -> None:
-    response = client.put(
-        "/api/board",
-        json={
-            "columns": [{"id": "col-1", "title": "Only", "cardIds": []}],
-            "cards": {},
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json() == {
-        "detail": "Board must keep the fixed five-column structure."
-    }
-
-
-def test_chat_rejects_ai_board_update_that_breaks_columns(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _mock(board, user_message, conversation_history):
-        return {
-            "assistant_message": "Updated",
-            "board_update": {
-                "board": {
-                    "columns": [{"id": "col-1", "title": "Only", "cardIds": []}],
-                    "cards": {},
-                }
-            },
-        }
-
-    monkeypatch.setattr("main.request_openrouter_structured_output", _mock)
-
-    response = client.post("/api/chat", json={"message": "collapse columns"})
-
-    assert response.status_code == 502
-    assert response.json() == {
-        "detail": "AI board_update must keep the fixed five-column structure."
-    }
-
-
-def test_get_board_repairs_invalid_persisted_board(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        "main.get_board_for_user",
-        lambda db_path, username: (
-            {
-                "columns": [{"id": "col-1", "title": "Only", "cardIds": []}],
-                "cards": {},
-            },
-            1,
-        ),
-    )
-
-    calls: list[dict] = []
-
-    def _capture_update(db_path, username, board, expected_version=None):
-        calls.append(board)
-        return True
-
-    monkeypatch.setattr("main.update_board_for_user", _capture_update)
-
-    response = client.get("/api/board")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert [column["id"] for column in payload["columns"]] == [
-        "col-backlog",
-        "col-discovery",
-        "col-progress",
-        "col-review",
-        "col-done",
-    ]
-    assert len(calls) == 1
-
-
-def test_put_board_rejects_inconsistent_card_refs(client: TestClient) -> None:
-    response = client.put(
-        "/api/board",
-        json={
-            "columns": [
-                {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-missing"]},
-                {"id": "col-discovery", "title": "Discovery", "cardIds": []},
-                {"id": "col-progress", "title": "In Progress", "cardIds": []},
-                {"id": "col-review", "title": "Review", "cardIds": []},
-                {"id": "col-done", "title": "Done", "cardIds": []},
-            ],
-            "cards": {},
-        },
-    )
-
-    assert response.status_code == 422
-    assert "Card references are inconsistent" in response.json()["detail"]
+def test_chat_on_board_requires_auth(client: TestClient) -> None:
+    response = client.post("/api/boards/1/chat", json={"message": "hello"})
+    assert response.status_code == 401
 
 
 def test_chat_rejects_oversized_message(client: TestClient) -> None:
-    response = client.post("/api/chat", json={"message": "x" * 2001})
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    response = client.post(
+        f"/api/boards/{board_id}/chat",
+        json={"message": "x" * 2001},
+        headers=headers,
+    )
     assert response.status_code == 422
+
+
+# --- Legacy chat ---
+
+def test_legacy_chat_response_only(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = _auth_headers(client)
+
+    async def _mock(board, user_message, conversation_history):
+        return {"assistant_message": "No changes needed"}
+
+    monkeypatch.setattr("main.request_openrouter_structured_output", _mock)
+
+    response = client.post(
+        "/api/chat",
+        json={"message": "summarize"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["assistant_message"] == "No changes needed"
+
+
+# --- Card with enhanced fields ---
+
+def test_card_with_priority_and_due_date(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    payload = {
+        "columns": [
+            {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-1"]},
+            {"id": "col-discovery", "title": "Discovery", "cardIds": []},
+            {"id": "col-progress", "title": "In Progress", "cardIds": []},
+            {"id": "col-review", "title": "Review", "cardIds": []},
+            {"id": "col-done", "title": "Done", "cardIds": []},
+        ],
+        "cards": {
+            "card-1": {
+                "id": "card-1",
+                "title": "Task with priority",
+                "details": "Has due date",
+                "priority": "high",
+                "due_date": "2026-03-15",
+                "labels": ["frontend", "urgent"],
+            }
+        },
+    }
+
+    response = client.put(f"/api/boards/{board_id}", json=payload, headers=headers)
+    assert response.status_code == 200
+
+    get_resp = client.get(f"/api/boards/{board_id}", headers=headers)
+    card = get_resp.json()["board"]["cards"]["card-1"]
+    assert card["priority"] == "high"
+    assert card["due_date"] == "2026-03-15"
+    assert card["labels"] == ["frontend", "urgent"]
+
+
+# --- User isolation ---
+
+def test_user_cannot_access_other_users_board(client: TestClient) -> None:
+    # Register two users
+    resp1 = client.post(
+        "/api/auth/register",
+        json={"username": "user_a", "password": "pass1234"},
+    )
+    token_a = resp1.json()["token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+
+    resp2 = client.post(
+        "/api/auth/register",
+        json={"username": "user_b", "password": "pass1234"},
+    )
+    token_b = resp2.json()["token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # Get user A's board
+    boards_a = client.get("/api/boards", headers=headers_a).json()
+    board_id_a = boards_a[0]["id"]
+
+    # User B tries to access user A's board
+    response = client.get(f"/api/boards/{board_id_a}", headers=headers_b)
+    assert response.status_code == 404

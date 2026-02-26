@@ -17,7 +17,7 @@ import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
 import { AiSidebar, type ChatItem } from "@/components/AiSidebar";
 import { createId, initialData, moveCard, type BoardData } from "@/lib/kanban";
-import { fetchBoard, saveBoard, sendChatMessage } from "@/lib/boardApi";
+import { fetchBoardById, saveBoardById, sendChatMessageToBoard } from "@/lib/boardApi";
 
 const EXPECTED_COLUMN_IDS = [
   "col-backlog",
@@ -43,7 +43,13 @@ function isValidBoard(board: unknown): board is BoardData {
   return true;
 }
 
-export const KanbanBoard = () => {
+type KanbanBoardProps = {
+  boardId: number;
+  boardName: string;
+  onBack: () => void;
+};
+
+export const KanbanBoard = ({ boardId, boardName, onBack }: KanbanBoardProps) => {
   const [board, setBoard] = useState<BoardData | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -70,23 +76,15 @@ export const KanbanBoard = () => {
       setIsLoading(true);
       setBoardError("");
       try {
-        const nextBoard = await fetchBoard();
-        if (!isMounted) {
-          return;
-        }
-        setBoard(nextBoard);
+        const result = await fetchBoardById(boardId);
+        if (!isMounted) return;
+        setBoard(result.board);
       } catch (err) {
-        if (!isMounted) {
-          return;
-        }
+        if (!isMounted) return;
         setBoard(initialData);
-        setBoardError(
-          err instanceof Error ? err.message : "Failed to load board"
-        );
+        setBoardError(err instanceof Error ? err.message : "Failed to load board");
       } finally {
-        if (isMounted) {
-          setIsLoading(false);
-        }
+        if (isMounted) setIsLoading(false);
       }
     };
 
@@ -95,18 +93,18 @@ export const KanbanBoard = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [boardId]);
 
   const cardsById = useMemo(() => board?.cards ?? {}, [board]);
 
   const persistBoard = useCallback(async (nextBoard: BoardData) => {
     try {
-      await saveBoard(nextBoard);
+      await saveBoardById(boardId, nextBoard);
       setBoardError("");
     } catch (err) {
       setBoardError(err instanceof Error ? err.message : "Failed to save board");
     }
-  }, []);
+  }, [boardId]);
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveCardId(event.active.id as string);
@@ -116,14 +114,10 @@ export const KanbanBoard = () => {
     const { active, over } = event;
     setActiveCardId(null);
 
-    if (!board || !over || active.id === over.id) {
-      return;
-    }
+    if (!board || !over || active.id === over.id) return;
 
     setBoard((prev) => {
-      if (!prev) {
-        return prev;
-      }
+      if (!prev) return prev;
 
       const nextBoard = {
         ...prev,
@@ -137,9 +131,7 @@ export const KanbanBoard = () => {
   const handleRenameColumn = useCallback(
     (columnId: string, title: string) => {
       setBoard((prev) => {
-        if (!prev) {
-          return prev;
-        }
+        if (!prev) return prev;
 
         const nextBoard = {
           ...prev,
@@ -148,9 +140,7 @@ export const KanbanBoard = () => {
           ),
         };
 
-        if (renameTimerRef.current) {
-          clearTimeout(renameTimerRef.current);
-        }
+        if (renameTimerRef.current) clearTimeout(renameTimerRef.current);
         renameTimerRef.current = setTimeout(() => {
           void persistBoard(nextBoard);
         }, 500);
@@ -164,9 +154,7 @@ export const KanbanBoard = () => {
   const handleAddCard = (columnId: string, title: string, details: string) => {
     const id = createId("card");
     setBoard((prev) => {
-      if (!prev) {
-        return prev;
-      }
+      if (!prev) return prev;
 
       const nextBoard = {
         ...prev,
@@ -187,9 +175,7 @@ export const KanbanBoard = () => {
 
   const handleDeleteCard = (columnId: string, cardId: string) => {
     setBoard((prev) => {
-      if (!prev) {
-        return prev;
-      }
+      if (!prev) return prev;
 
       const nextBoard = {
         ...prev,
@@ -198,12 +184,25 @@ export const KanbanBoard = () => {
         ),
         columns: prev.columns.map((column) =>
           column.id === columnId
-            ? {
-                ...column,
-                cardIds: column.cardIds.filter((id) => id !== cardId),
-              }
+            ? { ...column, cardIds: column.cardIds.filter((id) => id !== cardId) }
             : column
         ),
+      };
+      void persistBoard(nextBoard);
+      return nextBoard;
+    });
+  };
+
+  const handleUpdateCard = (cardId: string, updates: Partial<{ title: string; details: string; priority: string | null; due_date: string | null; labels: string[] }>) => {
+    setBoard((prev) => {
+      if (!prev || !prev.cards[cardId]) return prev;
+
+      const nextBoard = {
+        ...prev,
+        cards: {
+          ...prev.cards,
+          [cardId]: { ...prev.cards[cardId], ...updates },
+        },
       };
       void persistBoard(nextBoard);
       return nextBoard;
@@ -220,7 +219,7 @@ export const KanbanBoard = () => {
     setIsSendingChat(true);
 
     try {
-      const response = await sendChatMessage(message);
+      const response = await sendChatMessageToBoard(boardId, message);
       const assistantMessage: ChatItem = {
         id: createId("chat"),
         role: "assistant",
@@ -274,10 +273,21 @@ export const KanbanBoard = () => {
         ) : null}
 
         <header className="flex items-center justify-between gap-6 rounded-2xl border border-[var(--stroke)] bg-white/80 px-6 py-4 shadow-[0_4px_16px_rgba(3,33,71,0.06)] backdrop-blur">
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex items-center gap-1 rounded-full border border-[var(--stroke)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:border-[var(--gray-text)] hover:text-[var(--navy-dark)]"
+              aria-label="Back to boards"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+              Boards
+            </button>
             <div>
               <h1 className="font-display text-xl font-semibold text-[var(--navy-dark)]">
-                Kanban Studio
+                {boardName}
               </h1>
               <p className="text-xs text-[var(--gray-text)]">
                 Drag cards between columns to track progress
@@ -313,6 +323,7 @@ export const KanbanBoard = () => {
                   onRename={handleRenameColumn}
                   onAddCard={handleAddCard}
                   onDeleteCard={handleDeleteCard}
+                  onUpdateCard={handleUpdateCard}
                 />
               ))}
             </div>

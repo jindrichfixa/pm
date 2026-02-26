@@ -1,31 +1,30 @@
-# Database Design (Part 5)
+# Database Design
 
-This document proposes the MVP SQLite schema and persistence approach for the Kanban app.
+This document describes the SQLite schema and persistence approach for the Project Management application.
 
 ## Goals
 
-- Keep schema minimal for MVP.
-- Support current requirements:
-  - dummy login user (`user` / `password`)
-  - one board per signed-in user
-  - board persisted as JSON
-- Leave room for later multi-user and AI chat history expansion.
+- Support multi-user authentication with bcrypt password hashing
+- Support multiple boards per user
+- Board persisted as JSON with card-level metadata (priority, due dates, labels)
+- Chat history per board for AI context
 
 ## SQLite file
 
-- DB file path (proposed): `backend/data/app.db`
+- DB file path: `backend/data/app.db` (overridable via `PM_DB_PATH`)
 - If the file or parent directory does not exist, backend creates both at startup.
 
-## Proposed schema
+## Schema
 
 ### 1) `users`
 
-Stores app users. For MVP, backend will seed a single user row for `user` if missing.
+Stores registered users. Backend seeds a demo user (`user` / `password`) on first startup.
 
 ```sql
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL DEFAULT '',
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -33,18 +32,22 @@ CREATE TABLE IF NOT EXISTS users (
 ```
 
 Notes:
-- Even with dummy credentials, schema stores `password_hash` to avoid plain text and keep future path clean.
-- `username` unique supports future multi-user.
+- Passwords hashed with bcrypt (not SHA-256).
+- `display_name` for UI display, defaults to empty string.
+- `username` unique constraint prevents duplicates.
 
 ### 2) `boards`
 
-Stores one board JSON document per user.
+Stores board JSON documents. Multiple boards per user.
 
 ```sql
 CREATE TABLE IF NOT EXISTS boards (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL UNIQUE,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL DEFAULT 'Untitled Board',
+  description TEXT NOT NULL DEFAULT '',
   board_json TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -52,99 +55,93 @@ CREATE TABLE IF NOT EXISTS boards (
 ```
 
 Notes:
-- `UNIQUE(user_id)` enforces MVP rule: one board per user.
-- `board_json` contains serialized board structure currently used by frontend (`columns` + `cards`).
+- No UNIQUE on `user_id` -- allows multiple boards per user.
+- `name` and `description` provide board-level metadata.
+- `board_json` contains serialized board structure (`columns` + `cards`).
+- `version` column enables optimistic concurrency control for AI updates.
+- Index on `user_id` for efficient board listing.
 
-### 3) `chat_messages` (optional now, ready for AI phases)
+### 3) `chat_messages`
 
-Stores conversation history per user for AI context.
+Stores conversation history per board for AI context.
 
 ```sql
 CREATE TABLE IF NOT EXISTS chat_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  board_id INTEGER NOT NULL,
   user_id INTEGER NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
   content TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 ```
 
 Notes:
-- This table can be created now or deferred until Part 8/9.
-- Keeps AI context persistence simple and append-only.
+- Messages scoped to board (not user), so each board has its own conversation.
+- Auto-prunes to 100 messages per board.
+- Index on `(board_id, id)` for efficient retrieval.
+
+## Card data model
+
+Cards stored in `board_json` with these fields:
+
+```json
+{
+  "id": "card-xxx",
+  "title": "Card title",
+  "details": "Card description",
+  "priority": "high",
+  "due_date": "2026-03-15",
+  "labels": ["frontend", "urgent"]
+}
+```
+
+- `priority`: optional, one of `low`, `medium`, `high`, `critical`
+- `due_date`: optional, ISO date string
+- `labels`: optional, list of strings (max 10)
 
 ## Initialization strategy
 
 On backend startup:
 
 1. Ensure `backend/data/` exists.
-2. Open SQLite connection to `backend/data/app.db`.
-3. Execute `CREATE TABLE IF NOT EXISTS` for required tables.
-4. Seed default MVP user if not present:
-   - username: `user`
-   - password_hash: hash of `password`
-5. Seed default board row for that user if missing using initial Kanban JSON.
+2. Open SQLite connection with foreign keys enabled.
+3. Execute `CREATE TABLE IF NOT EXISTS` for all tables.
+4. Create indexes.
+5. Seed demo user if not present (username: `user`, password: `password`).
+6. Create default board for demo user if no boards exist.
 
-## Rationale and tradeoffs
+## API contract
 
-### Why JSON board storage for MVP
+### Auth
+- `POST /api/auth/register` -> creates user, returns JWT + user
+- `POST /api/auth/login` -> authenticates, returns JWT + user
+- `GET /api/auth/me` -> returns current user info
 
-Pros:
-- Fastest path to persistent behavior matching existing frontend state model.
-- Minimal schema complexity while requirements are still evolving.
-- Easy to pass complete board payloads to AI in future parts.
+### Board CRUD
+- `GET /api/boards` -> list user's boards (metadata only)
+- `POST /api/boards` -> create board with name/description
+- `GET /api/boards/:id` -> get board with full data
+- `PUT /api/boards/:id` -> update board data (validates structure)
+- `PATCH /api/boards/:id/meta` -> update name/description
+- `DELETE /api/boards/:id` -> delete board and its chat messages
 
-Cons:
-- Harder to query card-level analytics in SQL.
-- Whole-document updates replace full JSON blob.
+### Board data + Chat
+- `POST /api/boards/:id/chat` -> AI chat with board context
 
-Decision:
-- Accept tradeoff for MVP simplicity.
-- If product scope grows, migrate to normalized board/column/card tables later.
+### Legacy (backward compat)
+- `GET /api/board`, `PUT /api/board`, `POST /api/chat` -- operate on user's first board
 
-### Why keep `users` table now
+## User isolation
 
-Pros:
-- Aligns with future multi-user intent.
-- Avoids future rework in API contract and DB migration.
+- All board/chat queries filter by `user_id` from JWT token.
+- Users cannot access, modify, or delete other users' boards.
 
-Cons:
-- Slight upfront schema overhead.
+## Security
 
-Decision:
-- Keep minimal `users` table with one seeded user for MVP.
-
-## API contract impact (for Part 6)
-
-- `GET /api/board` -> returns board JSON for authenticated user.
-- `PUT /api/board` -> validates and stores updated board JSON.
-- (Later) `POST /api/chat` -> appends user message, calls LLM, appends assistant message.
-
-## Implementation status
-
-- Part 6 implementation is complete.
-- Backend currently defaults API board operations to username `user` (MVP simplification).
-- Part 7 frontend wiring is complete: board loads/saves through `/api/board` and persists across refresh.
-- Part 9 implementation is complete: backend AI chat uses structured outputs and persists valid board updates.
-- Backend now enforces fixed five-column board structure for `/api/board` and `/api/chat` updates.
-- If legacy/invalid persisted board JSON is detected, backend auto-repairs to default board on read.
-
-## Migration/versioning approach
-
-For MVP, use lightweight SQL versioning with `PRAGMA user_version`:
-
-- `user_version = 1`: users + boards (+ optional chat_messages)
-
-Future migrations can bump version and apply incremental SQL scripts.
-
-## Security note (MVP)
-
-- Dummy credentials are intentionally hardcoded for this phase.
-- Store password as hash in DB anyway to avoid normalizing insecure patterns in code.
-
-## Acceptance criteria for Part 5
-
-- Schema supports one-board-per-user constraint.
-- DB auto-creates if missing.
-- Design is documented and approved before Part 6 implementation.
+- Passwords hashed with bcrypt (salt auto-generated).
+- JWT tokens signed with HS256 using `PM_JWT_SECRET` env var.
+- Token expiry: 24 hours.
+- All API endpoints except health and auth require valid JWT.

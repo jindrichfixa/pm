@@ -1,26 +1,46 @@
-export const AUTH_USER = "user";
-export const AUTH_PASSWORD = "password";
-export const AUTH_STORAGE_KEY = "pm-authenticated";
+export const AUTH_STORAGE_KEY = "pm-auth-token";
+export const USER_STORAGE_KEY = "pm-auth-user";
 
-export const isValidCredentials = (username: string, password: string): boolean =>
-  username === AUTH_USER && password === AUTH_PASSWORD;
-
-export const getStoredAuth = (): boolean => {
-  if (typeof window === "undefined") {
-    return false;
-  }
-  return window.localStorage.getItem(AUTH_STORAGE_KEY) === "true";
+export type AuthUser = {
+  id: number;
+  username: string;
+  display_name: string;
 };
 
-export const setStoredAuth = (isAuthenticated: boolean): void => {
-  if (typeof window === "undefined") {
-    return;
-  }
+export const getStoredToken = (): string | null => {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(AUTH_STORAGE_KEY);
+};
 
-  if (isAuthenticated) {
-    window.localStorage.setItem(AUTH_STORAGE_KEY, "true");
-    return;
+export const getStoredUser = (): AuthUser | null => {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(USER_STORAGE_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    return null;
   }
+};
 
-  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+export const setStoredAuth = (token: string | null, user: AuthUser | null): void => {
+  if (typeof window === "undefined") return;
+
+  if (token && user) {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, token);
+    window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+  } else {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.localStorage.removeItem(USER_STORAGE_KEY);
+  }
+};
+
+export const isAuthenticated = (): boolean => {
+  return getStoredToken() !== null;
+};
+
+export const getAuthHeaders = (): Record<string, string> => {
+  const token = getStoredToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
 };

@@ -1,5 +1,4 @@
 import copy
-import hashlib
 import json
 import os
 import sqlite3
@@ -7,9 +6,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+import bcrypt
+
 DEFAULT_DB_PATH = Path(
     os.environ.get("PM_DB_PATH", str(Path(__file__).resolve().parent / "data" / "app.db"))
 )
+
+FIXED_COLUMN_IDS = ["col-backlog", "col-discovery", "col-progress", "col-review", "col-done"]
 
 DEFAULT_BOARD: dict[str, Any] = {
     "columns": [
@@ -65,20 +68,22 @@ DEFAULT_BOARD: dict[str, Any] = {
 
 
 def get_default_board() -> dict[str, Any]:
-    """Return a fresh deep copy of DEFAULT_BOARD to prevent mutation of the global."""
     return copy.deepcopy(DEFAULT_BOARD)
 
 
-# WARNING: Unsalted SHA-256 is intentionally weak for MVP. Must be replaced with
-# bcrypt/argon2 before any production or multi-user deployment.
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
 
 
 @contextmanager
 def get_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA foreign_keys = ON")
     connection.row_factory = sqlite3.Row
     try:
         yield connection
@@ -96,6 +101,7 @@ def initialize_database(db_path: Path) -> None:
             CREATE TABLE IF NOT EXISTS users (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               username TEXT NOT NULL UNIQUE,
+              display_name TEXT NOT NULL DEFAULT '',
               password_hash TEXT NOT NULL,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -106,7 +112,9 @@ def initialize_database(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS boards (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              user_id INTEGER NOT NULL UNIQUE,
+              user_id INTEGER NOT NULL,
+              name TEXT NOT NULL DEFAULT 'Untitled Board',
+              description TEXT NOT NULL DEFAULT '',
               board_json TEXT NOT NULL,
               version INTEGER NOT NULL DEFAULT 1,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -119,10 +127,12 @@ def initialize_database(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS chat_messages (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
+              board_id INTEGER NOT NULL,
               user_id INTEGER NOT NULL,
               role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant')),
               content TEXT NOT NULL,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE,
               FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             """
@@ -130,79 +140,164 @@ def initialize_database(db_path: Path) -> None:
 
         connection.execute(
             """
-            CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id
-            ON chat_messages (user_id, id)
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_board_id
+            ON chat_messages (board_id, id)
             """
         )
-
-        # Migrate: add version column if missing (existing databases)
-        columns = [
-            row[1]
-            for row in connection.execute("PRAGMA table_info(boards)").fetchall()
-        ]
-        if "version" not in columns:
-            connection.execute(
-                "ALTER TABLE boards ADD COLUMN version INTEGER NOT NULL DEFAULT 1"
-            )
 
         connection.execute(
             """
-            INSERT INTO users (username, password_hash)
-            VALUES (?, ?)
-            ON CONFLICT(username) DO NOTHING
-            """,
-            ("user", hash_password("password")),
+            CREATE INDEX IF NOT EXISTS idx_boards_user_id
+            ON boards (user_id)
+            """
         )
 
-        user_row = connection.execute(
+        # Seed demo user if not exists
+        existing = connection.execute(
             "SELECT id FROM users WHERE username = ?", ("user",)
         ).fetchone()
-        if user_row is None:
-            raise RuntimeError("Failed to seed default user.")
+        if existing is None:
+            pw_hash = hash_password("password")
+            connection.execute(
+                "INSERT INTO users (username, display_name, password_hash) VALUES (?, ?, ?)",
+                ("user", "Demo User", pw_hash),
+            )
+            user_row = connection.execute(
+                "SELECT id FROM users WHERE username = ?", ("user",)
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO boards (user_id, name, description, board_json) VALUES (?, ?, ?, ?)",
+                (user_row["id"], "My First Board", "Default project board", json.dumps(DEFAULT_BOARD)),
+            )
 
-        connection.execute(
-            """
-            INSERT INTO boards (user_id, board_json)
-            VALUES (?, ?)
-            ON CONFLICT(user_id) DO NOTHING
-            """,
-            (user_row["id"], json.dumps(DEFAULT_BOARD)),
-        )
+
+# --- User management ---
+
+def create_user(db_path: Path, username: str, password: str, display_name: str = "") -> int | None:
+    pw_hash = hash_password(password)
+    with get_connection(db_path) as connection:
+        try:
+            connection.execute(
+                "INSERT INTO users (username, display_name, password_hash) VALUES (?, ?, ?)",
+                (username, display_name, pw_hash),
+            )
+            row = connection.execute(
+                "SELECT id FROM users WHERE username = ?", (username,)
+            ).fetchone()
+            return row["id"] if row else None
+        except sqlite3.IntegrityError:
+            return None
 
 
-def get_board_for_user(
-    db_path: Path, username: str
-) -> tuple[dict[str, Any], int] | None:
+def authenticate_user(db_path: Path, username: str, password: str) -> dict[str, Any] | None:
     with get_connection(db_path) as connection:
         row = connection.execute(
-            """
-            SELECT b.board_json, b.version
-            FROM boards b
-            INNER JOIN users u ON u.id = b.user_id
-            WHERE u.username = ?
-            """,
+            "SELECT id, username, display_name, password_hash FROM users WHERE username = ?",
             (username,),
         ).fetchone()
 
     if row is None:
         return None
 
-    return json.loads(row["board_json"]), row["version"]
+    if not verify_password(password, row["password_hash"]):
+        return None
+
+    return {"id": row["id"], "username": row["username"], "display_name": row["display_name"]}
 
 
-def update_board_for_user(
+def get_user_by_id(db_path: Path, user_id: int) -> dict[str, Any] | None:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            "SELECT id, username, display_name FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {"id": row["id"], "username": row["username"], "display_name": row["display_name"]}
+
+
+def get_user_by_username(db_path: Path, username: str) -> dict[str, Any] | None:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            "SELECT id, username, display_name FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {"id": row["id"], "username": row["username"], "display_name": row["display_name"]}
+
+
+# --- Board management ---
+
+def create_board(
     db_path: Path,
-    username: str,
+    user_id: int,
+    name: str,
+    description: str = "",
+    board_data: dict[str, Any] | None = None,
+) -> int:
+    if board_data is None:
+        board_data = get_default_board()
+
+    with get_connection(db_path) as connection:
+        cursor = connection.execute(
+            "INSERT INTO boards (user_id, name, description, board_json) VALUES (?, ?, ?, ?)",
+            (user_id, name, description, json.dumps(board_data)),
+        )
+        return cursor.lastrowid  # type: ignore[return-value]
+
+
+def list_boards_for_user(db_path: Path, user_id: int) -> list[dict[str, Any]]:
+    with get_connection(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, name, description, version, created_at, updated_at
+            FROM boards
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "version": row["version"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+
+
+def get_board(db_path: Path, board_id: int, user_id: int) -> tuple[dict[str, Any], int, str, str] | None:
+    """Returns (board_data, version, name, description) or None."""
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            "SELECT board_json, version, name, description FROM boards WHERE id = ? AND user_id = ?",
+            (board_id, user_id),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return json.loads(row["board_json"]), row["version"], row["name"], row["description"]
+
+
+def update_board_data(
+    db_path: Path,
+    board_id: int,
+    user_id: int,
     board: dict[str, Any],
     expected_version: int | None = None,
 ) -> bool:
     with get_connection(db_path) as connection:
-        user = connection.execute(
-            "SELECT id FROM users WHERE username = ?", (username,)
-        ).fetchone()
-        if user is None:
-            return False
-
         board_json = json.dumps(board)
 
         if expected_version is not None:
@@ -210,42 +305,58 @@ def update_board_for_user(
                 """
                 UPDATE boards
                 SET board_json = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE user_id = ? AND version = ?
+                WHERE id = ? AND user_id = ? AND version = ?
                 """,
-                (board_json, user["id"], expected_version),
+                (board_json, board_id, user_id, expected_version),
             )
-            if result.rowcount == 0:
-                return False
+            return result.rowcount > 0
         else:
-            connection.execute(
+            result = connection.execute(
                 """
-                INSERT INTO boards (user_id, board_json)
-                VALUES (?, ?)
-                ON CONFLICT(user_id)
-                DO UPDATE SET board_json = excluded.board_json,
-                             version = boards.version + 1,
-                             updated_at = CURRENT_TIMESTAMP
+                UPDATE boards
+                SET board_json = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
                 """,
-                (user["id"], board_json),
+                (board_json, board_id, user_id),
             )
+            return result.rowcount > 0
 
-    return True
+
+def update_board_meta(db_path: Path, board_id: int, user_id: int, name: str, description: str) -> bool:
+    with get_connection(db_path) as connection:
+        result = connection.execute(
+            """
+            UPDATE boards
+            SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+            """,
+            (name, description, board_id, user_id),
+        )
+        return result.rowcount > 0
 
 
-def get_chat_messages_for_user(
-    db_path: Path, username: str, limit: int = 20
-) -> list[dict[str, str]]:
+def delete_board(db_path: Path, board_id: int, user_id: int) -> bool:
+    with get_connection(db_path) as connection:
+        result = connection.execute(
+            "DELETE FROM boards WHERE id = ? AND user_id = ?",
+            (board_id, user_id),
+        )
+        return result.rowcount > 0
+
+
+# --- Chat messages (per board) ---
+
+def get_chat_messages(db_path: Path, board_id: int, limit: int = 20) -> list[dict[str, str]]:
     with get_connection(db_path) as connection:
         rows = connection.execute(
             """
-            SELECT cm.role, cm.content
-            FROM chat_messages cm
-            INNER JOIN users u ON u.id = cm.user_id
-            WHERE u.username = ?
-            ORDER BY cm.id DESC
+            SELECT role, content
+            FROM chat_messages
+            WHERE board_id = ?
+            ORDER BY id DESC
             LIMIT ?
             """,
-            (username, limit),
+            (board_id, limit),
         ).fetchall()
 
     messages = [{"role": row["role"], "content": row["content"]} for row in rows]
@@ -256,36 +367,88 @@ def get_chat_messages_for_user(
 _MAX_CHAT_MESSAGES = 100
 
 
-def append_chat_message_for_user(
-    db_path: Path, username: str, role: str, content: str
-) -> bool:
+def append_chat_message(db_path: Path, board_id: int, user_id: int, role: str, content: str) -> bool:
     with get_connection(db_path) as connection:
-        user = connection.execute(
-            "SELECT id FROM users WHERE username = ?", (username,)
+        # Verify the board exists and belongs to user
+        board = connection.execute(
+            "SELECT id FROM boards WHERE id = ? AND user_id = ?",
+            (board_id, user_id),
         ).fetchone()
-        if user is None:
+        if board is None:
             return False
 
         connection.execute(
-            """
-            INSERT INTO chat_messages (user_id, role, content)
-            VALUES (?, ?, ?)
-            """,
-            (user["id"], role, content),
+            "INSERT INTO chat_messages (board_id, user_id, role, content) VALUES (?, ?, ?, ?)",
+            (board_id, user_id, role, content),
         )
 
         # Prune old messages beyond the limit
         connection.execute(
             """
             DELETE FROM chat_messages
-            WHERE user_id = ? AND id NOT IN (
+            WHERE board_id = ? AND id NOT IN (
                 SELECT id FROM chat_messages
-                WHERE user_id = ?
+                WHERE board_id = ?
                 ORDER BY id DESC
                 LIMIT ?
             )
             """,
-            (user["id"], user["id"], _MAX_CHAT_MESSAGES),
+            (board_id, board_id, _MAX_CHAT_MESSAGES),
         )
 
     return True
+
+
+# --- Backward-compatible aliases for the MVP single-user path ---
+
+def get_board_for_user(db_path: Path, username: str) -> tuple[dict[str, Any], int] | None:
+    """Legacy helper: get first board for username."""
+    user = get_user_by_username(db_path, username)
+    if user is None:
+        return None
+    boards = list_boards_for_user(db_path, user["id"])
+    if not boards:
+        return None
+    result = get_board(db_path, boards[0]["id"], user["id"])
+    if result is None:
+        return None
+    board_data, version, _name, _desc = result
+    return board_data, version
+
+
+def update_board_for_user(
+    db_path: Path,
+    username: str,
+    board: dict[str, Any],
+    expected_version: int | None = None,
+) -> bool:
+    """Legacy helper: update first board for username."""
+    user = get_user_by_username(db_path, username)
+    if user is None:
+        return False
+    boards = list_boards_for_user(db_path, user["id"])
+    if not boards:
+        return False
+    return update_board_data(db_path, boards[0]["id"], user["id"], board, expected_version)
+
+
+def get_chat_messages_for_user(db_path: Path, username: str, limit: int = 20) -> list[dict[str, str]]:
+    """Legacy helper: get chat for first board of username."""
+    user = get_user_by_username(db_path, username)
+    if user is None:
+        return []
+    boards = list_boards_for_user(db_path, user["id"])
+    if not boards:
+        return []
+    return get_chat_messages(db_path, boards[0]["id"], limit)
+
+
+def append_chat_message_for_user(db_path: Path, username: str, role: str, content: str) -> bool:
+    """Legacy helper: append chat for first board of username."""
+    user = get_user_by_username(db_path, username)
+    if user is None:
+        return False
+    boards = list_boards_for_user(db_path, user["id"])
+    if not boards:
+        return False
+    return append_chat_message(db_path, boards[0]["id"], user["id"], role, content)
