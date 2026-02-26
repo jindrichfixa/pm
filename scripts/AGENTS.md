@@ -7,13 +7,7 @@ This folder contains cross-platform helper scripts for starting/stopping the loc
 - Windows (PowerShell)
 	- `start-server.ps1`
 	- `stop-server.ps1`
-- Mac (bash)
-	- `start-server-mac.sh`
-	- `stop-server-mac.sh`
-- Linux (bash)
-	- `start-server-linux.sh`
-	- `stop-server-linux.sh`
-- Generic bash (optional)
+- Mac / Linux (bash)
 	- `start-server.sh`
 	- `stop-server.sh`
 
@@ -30,6 +24,5 @@ This folder contains cross-platform helper scripts for starting/stopping the loc
 
 ## Notes
 
-- Scripts are intentionally minimal for MVP scaffolding.
-- Future phases may add health checks, log tailing, and validation helpers if needed.
+- Scripts are intentionally minimal.
 - If start fails due to stale containers or network state, run stop script first, then start again.

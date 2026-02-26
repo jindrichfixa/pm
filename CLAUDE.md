@@ -141,6 +141,10 @@ Cross-platform scripts are in `scripts/` (PowerShell for Windows, bash for Mac/L
 - Demo login credentials: `user` / `password`
 
 
+## Project Status
+
+MVP (Parts 1-10) and two iterations of enhancements are complete. See `AGENTS.md` for full feature list and `docs/PLAN.md` for the execution history.
+
 ## DETAILED PLAN
 
 @docs/PLAN.md contains the detailed implementation plan with checklists and success criteria for each part of the project. Please review it before proceeding with any implementation work.

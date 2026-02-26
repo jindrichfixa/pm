@@ -1,80 +1,75 @@
 # Frontend Agent Notes
 
-This document describes the current frontend baseline in `frontend/` so implementation changes can stay focused and verifiable.
+This document describes the current frontend in `frontend/`.
 
 ## Overview
 
-- Framework: Next.js (App Router)
-- Language: TypeScript + React
-- Styling: global CSS + utility classes
-- Primary UI: single-page Kanban board at `/`
-- Current state model: board UI is client-side rendered but persisted via backend board APIs
+- Framework: Next.js 16 (App Router)
+- Language: TypeScript + React 19
+- Styling: Tailwind v4
+- Drag-and-drop: `@dnd-kit`
+- Static export: `output: "export"` in next.config.ts
 
-## Current app behavior
+## App Flow
 
-- `src/app/page.tsx` now handles authentication gate and renders `KanbanBoard` only when authenticated.
-- `KanbanBoard` supports:
-  - fixed five columns
-  - inline column renaming
-  - add card per column
-  - remove card
-  - drag-and-drop card movement within and across columns (`@dnd-kit`)
-  - right-side AI chat sidebar
-  - chat thread rendering for user/assistant messages
-  - `POST /api/chat` integration
-  - automatic board refresh when AI returns `board_update`
-- Data shape is defined in `src/lib/kanban.ts`:
-  - `Card`, `Column`, `BoardData`
-  - seeded by `initialData`
-  - card movement logic centralized in `moveCard`
-- Auth helpers are defined in `src/lib/auth.ts`:
-  - hardcoded credential validation (`user` / `password`)
-  - localStorage session persistence (`pm-authenticated`)
+1. `src/app/page.tsx` -- entry point, handles auth gate (login/register), board dashboard, and board view routing
+2. Unauthenticated users see login/register form
+3. Authenticated users see the board dashboard (list of boards)
+4. Selecting a board opens the Kanban board view with AI sidebar
 
-## Key files
+## Authentication
 
-- App entry:
-  - `src/app/page.tsx`
-- Core board components:
-  - `src/components/KanbanBoard.tsx`
-  - `src/components/AiSidebar.tsx`
-  - `src/components/KanbanColumn.tsx`
-  - `src/components/KanbanCard.tsx`
-  - `src/components/KanbanCardPreview.tsx`
-  - `src/components/NewCardForm.tsx`
-- Board logic:
-  - `src/lib/kanban.ts`
-  - `src/lib/boardApi.ts` (`sendChatMessage`)
+- JWT-based auth against backend (`POST /api/auth/login`, `POST /api/auth/register`)
+- Token and user object stored in localStorage via `src/lib/auth.ts`
+- All API calls include `Authorization: Bearer <token>` header
+- Profile management (display name, password change) via `ProfileSettings` component
 
-## Testing baseline
+## Key Components
 
-- Unit/component tests:
-  - `src/app/page.test.tsx`
-  - `src/components/KanbanBoard.test.tsx`
-  - `src/lib/auth.test.ts`
-  - `src/lib/boardApi.test.ts`
-  - `src/lib/kanban.test.ts`
-- E2E tests:
-  - `tests/kanban.spec.ts`
-- Test tooling:
-  - Vitest + Testing Library for unit/component
-  - Playwright for E2E
+- `BoardDashboard.tsx` -- Board list, create new board, delete board, board selection
+- `KanbanBoard.tsx` -- Main board view with drag-and-drop columns and cards, toolbar with search/filter
+- `KanbanColumn.tsx` -- Single column with card list, inline rename, add/delete column
+- `KanbanCard.tsx` -- Card with inline editing, priority badge, due date, labels
+- `KanbanCardPreview.tsx` -- Drag overlay preview
+- `NewCardForm.tsx` -- Inline form for adding cards to a column
+- `CardDetailModal.tsx` -- Full card detail view with comments, priority, due date, labels editing
+- `ProfileSettings.tsx` -- Profile and password management modal
+- `AiSidebar.tsx` -- AI chat sidebar with conversation thread
 
-## Current constraints
+## Board Features
 
-- Frontend auth is local-only MVP gate (not server-authenticated yet).
-- Kanban UI now reads/saves board state through backend `/api/board`.
-- Board changes persist across page refresh/restart via backend SQLite.
-- Drag-and-drop behavior is functional and stable in current app flow.
+- Multiple boards per user
+- Custom columns (add, rename, delete) with max 20 columns
+- Card fields: title, details, priority (low/medium/high/critical), due date, labels
+- Card comments (add, delete)
+- Search/filter cards by text, priority, labels
+- Drag-and-drop cards within and across columns
+- AI chat that can read and update the board
 
-## E2E guidance
+## Data Layer
 
-- Default `npm run test:e2e` runs against local Next dev server.
-- To test against Dockerized backend-served frontend, set:
-  - `E2E_BASE_URL=http://127.0.0.1:8000`
+- `src/lib/boardApi.ts` -- API client for all backend calls (auth, board CRUD, chat, comments)
+- `src/lib/auth.ts` -- JWT token and user storage in localStorage
+- `src/lib/kanban.ts` -- Board data types (`Card`, `Column`, `BoardData`) and `moveCard` logic
 
-## Part 10 status
+## Testing
 
-- Part 10 frontend AI sidebar flow is implemented.
-- Unit/component and integration-style tests cover chat rendering, submit flow, and board sync.
-- Targeted E2E for `login -> ask AI -> board update visible` passes.
+- Unit/component tests (Vitest + Testing Library):
+	- `src/app/page.test.tsx`
+	- `src/components/KanbanBoard.test.tsx`
+	- `src/components/BoardDashboard.test.tsx`
+	- `src/components/CardDetailModal.test.tsx`
+	- `src/components/KanbanCard.test.tsx`
+	- `src/components/ProfileSettings.test.tsx`
+	- `src/lib/auth.test.ts`
+	- `src/lib/boardApi.test.ts`
+	- `src/lib/kanban.test.ts`
+- E2E tests (Playwright):
+	- `tests/kanban.spec.ts`
+- Run unit tests: `npm run test`
+- Run E2E: `npm run test:e2e`
+- E2E against Docker: `E2E_BASE_URL=http://127.0.0.1:8000 npm run test:e2e`
+
+## Path Alias
+
+- `@` maps to `src/` (configured in tsconfig.json)

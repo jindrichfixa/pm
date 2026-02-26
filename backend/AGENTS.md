@@ -1,80 +1,86 @@
 # Backend Agent Notes
 
-This directory contains the FastAPI backend scaffold for the Project Management MVP.
+This directory contains the FastAPI backend for the Project Management app.
 
-## Current backend scope (Part 2)
+## Architecture
 
-- `main.py` defines a small FastAPI app with:
-	- `GET /health` returning `{ "status": "ok" }`
-	- `GET /api/hello` returning `{ "message": "hello world" }`
-	- static frontend serving at `/` from `backend/static` (exported Next.js build)
+- `main.py` -- FastAPI app with all route handlers, Pydantic request/response models, JWT auth middleware
+- `db.py` -- SQLite helpers, schema initialization, CRUD for users/boards/chat/comments, `DEFAULT_BOARD` template
+- `auth.py` -- JWT token creation and verification (PyJWT + bcrypt password hashing)
+- `ai.py` -- OpenRouter client, structured output parsing for board updates
 
-## Python project setup
+## Authentication
 
-- `pyproject.toml` uses modern Python package metadata.
-- Runtime dependencies:
-	- `fastapi`
-	- `httpx`
-	- `uvicorn[standard]`
-- Dev dependencies:
-	- `pytest`
+- JWT-based auth using HS256 with `PM_JWT_SECRET` env var
+- Passwords hashed with bcrypt
+- Endpoints:
+	- `POST /api/auth/register` -- create account, returns JWT + user object
+	- `POST /api/auth/login` -- authenticate, returns JWT + user object
+	- `GET /api/auth/me` -- get current user (requires Bearer token)
+	- `PATCH /api/auth/profile` -- update display name
+	- `POST /api/auth/change-password` -- change password
+- All `/api/boards/*` and chat endpoints require `Authorization: Bearer <token>` header
+- Demo credentials: `user` / `password` (seeded on first startup)
+
+## Board APIs
+
+- `GET /api/boards` -- list user's boards
+- `POST /api/boards` -- create new board
+- `GET /api/boards/:id` -- get board with full data
+- `PUT /api/boards/:id` -- update board data (validates structure)
+- `PATCH /api/boards/:id/meta` -- update board name/description
+- `DELETE /api/boards/:id` -- delete board
+
+Board validation rules:
+- At least one column required, maximum 20 columns
+- Column IDs must be unique within a board
+- Card references must be consistent (no orphans)
+- Pydantic models enforce size limits on all string fields and list sizes
+- Default boards start with five columns: Backlog, Discovery, In Progress, Review, Done
+
+Custom columns are fully supported (add, rename, delete via board update).
+
+## Card Comments
+
+- `GET /api/boards/:id/cards/:cardId/comments` -- list comments
+- `POST /api/boards/:id/cards/:cardId/comments` -- add comment
+- `DELETE /api/boards/:id/cards/:cardId/comments/:commentId` -- delete comment
+
+## AI Integration
+
+- Uses OpenRouter with model `openai/gpt-oss-120b`
+- `POST /api/boards/:id/chat` -- AI chat with board context
+- `POST /api/ai/check` -- simple connectivity check
+- AI receives current board JSON + user message + conversation history
+- Structured output: `assistant_message` (required) + optional `board_update`
+- Valid board updates are persisted; invalid updates are rejected with 502
+- Returns 503 when API key is missing, 502 for upstream failures
+
+## Legacy Endpoints
+
+These support the original single-board API contract:
+- `GET /api/board` -- get first board
+- `PUT /api/board` -- update first board
+- `POST /api/chat` -- AI chat on first board
+
+## Database
+
+- SQLite at `backend/data/app.db` (auto-created on startup)
+- Override path with `PM_DB_PATH` env var
+- Schema initialized automatically on first run
+- Tables: `users`, `boards`, `chat_messages`, `card_comments`
 
 ## Testing
 
-- Backend tests live in `tests/test_main.py`.
-- API tests validate `/health`, `/api/hello`, `/api/board` read/write, and payload validation.
+- Tests in `tests/` directory
+- `test_main.py` -- API endpoint tests
+- `test_db.py` -- database layer tests
+- `test_ai.py` -- AI client and structured output parsing tests
+- Run: `uv run pytest`
 
-## Container/runtime expectations
+## Runtime
 
-- Root `Dockerfile` builds and runs backend from this folder.
-- Python dependency manager in container is `uv`.
-- App runs on port `8000`.
-
-## Current phase status
-
-- Backend MVP phases through Part 10 are implemented.
-- Current follow-up work is limited to incremental polish and maintenance; core MVP flow is complete.
-
-## Current backend scope (Part 8)
-
-- OpenRouter connectivity added in `ai.py`:
-	- model fixed to `openai/gpt-oss-120b`
-	- reads API key from `OPENROUTER_API_KEY`
-	- wraps upstream errors in deterministic application errors
-- API surface now includes:
-	- `POST /api/ai/check` with payload `{ "prompt": "..." }`
-	- response shape `{ "assistant_message": "..." }`
-	- returns 503 when API key is missing
-	- returns 502 for upstream/provider failures
-
-## Current tests
-
-- `tests/test_ai.py` covers request shaping and upstream failure handling
-- `tests/test_main.py` covers `/api/ai/check` success and error mapping
-
-## Current backend scope (Part 9)
-
-- AI chat endpoint added:
-	- `POST /api/chat` payload `{ "message": "..." }`
-	- response `{ "assistant_message": "...", "board_update": ... }`
-- Chat prompt now includes:
-	- current board JSON
-	- user message
-	- stored conversation history from `chat_messages`
-- Structured output handling:
-	- requires `assistant_message` string
-	- optional `board_update.board` validated with board schema
-	- valid board updates are persisted
-	- invalid structured output returns deterministic 502
-	- fixed five-column structure is enforced for board persistence and AI updates
-	- invalid persisted board payloads are auto-repaired to default structure on `GET /api/board`
-
-## Current tests
-
-- `tests/test_ai.py` covers structured output JSON parsing behavior
-- `tests/test_db.py` covers chat message persistence helpers
-- `tests/test_main.py` covers `/api/chat` response-only, valid update, invalid output handling, and fixed-column enforcement
-
-## Known current limitation
-
-- Frontend auth remains local-only MVP gate and is not enforced by backend APIs yet.
+- Python 3.13, managed with `uv`
+- Serves static frontend from `backend/static/` (copied from Next.js build)
+- Runs on port 8000
+- CORS configurable via `PM_CORS_ORIGINS`

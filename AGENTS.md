@@ -1,36 +1,36 @@
-# The Project Management MVP web app
+# The Project Management App
 
 ## Business Requirements
 
-This project is building a Project Management App. Key features:
-- A user can sign in
-- When signed in, the user sees a Kanban board representing their project
-- The Kanban board has fixed columns that can be renamed
-- The cards on the Kanban board can be moved with drag and drop, and edited
-- There is an AI chat feature in a sidebar; the AI is able to create / edit / move one or more cards
-
-## Limitations
-
-For the MVP, there will only be a user sign in (hardcoded to 'user' and 'password') but the database will support multiple users for future.
-
-For the MVP, there will only be 1 Kanban board per signed in user.
-
-For the MVP, this will run locally (in a docker container)
+This project is a Project Management App. Key features:
+- User registration and login (JWT authentication with bcrypt password hashing)
+- Multiple Kanban boards per user with custom columns (add, rename, delete)
+- Cards with drag-and-drop, inline editing, priority, due dates, labels, and comments
+- AI chat sidebar that can read the board and apply structured updates
+- Profile management (display name, password change)
 
 ## Technical Decisions
 
-- NextJS frontend
+- NextJS frontend (App Router, TypeScript, React 19, Tailwind v4)
 - Python FastAPI backend, including serving the static NextJS site at /
 - Everything packaged into a Docker container
 - Use "uv" as the package manager for python in the Docker container
 - Use OpenRouter for the AI calls. An OPENROUTER_API_KEY is in .env in the project root
 - Use `openai/gpt-oss-120b` as the model
-- Use SQLLite local database for the database, creating a new db if it doesn't exist
+- Use SQLite local database for the database, creating a new db if it doesn't exist
+- JWT auth with HS256 signing (PM_JWT_SECRET env var)
 - Start and Stop server scripts for Mac, PC, Linux in scripts/
 
-## Starting Point
+## Current Scope
 
-A working MVP of the frontend has been built and is already in frontend. This is not yet designed for the Docker setup. It's a pure frontend-only demo.
+- Multi-user with registration and login
+- Multiple boards per user (no limit)
+- Custom columns per board (1-20 columns, default 5: Backlog, Discovery, In Progress, Review, Done)
+- Card comments
+- Card search/filter by text, priority, labels
+- Profile and password management
+- AI chat with board context and structured board updates
+- Board data validated by Pydantic models with size limits
 
 ## Color Scheme
 
@@ -50,23 +50,12 @@ A working MVP of the frontend has been built and is already in frontend. This is
 
 ## Working documentation
 
-All documents for planning and executing this project will be in the docs/ directory.
+All documents for planning and executing this project are in the docs/ directory.
 Please review the docs/PLAN.md document before proceeding.
 
-## Progress snapshot (as of 2026-02-26)
+## Progress snapshot (as of 2026-02-27)
 
-- Parts completed:
-	- Part 1 (planning + docs baseline)
-	- Part 2 (Docker + FastAPI scaffold + scripts)
-	- Part 3 (frontend static build served by backend)
-	- Part 4 (MVP login/logout gate)
-	- Part 5 (database design proposal + signoff)
-	- Part 6 (backend SQLite persistence + board APIs)
-	- Part 7 (frontend board wired to backend persistence)
-	- Part 8 (OpenRouter connectivity from backend)
-	- Part 9 (AI structured output + safe board persistence)
-	- Part 10 (frontend AI sidebar + board refresh)
-- Current status:
-	- MVP feature flow is implemented end-to-end (login, board CRUD, AI sidebar, AI-driven board updates).
-	- Backend enforces fixed five-column board structure and rejects invalid AI board updates.
-	- E2E can run against Next dev server or Docker stack (`E2E_BASE_URL=http://127.0.0.1:8000`); drag-and-drop behavior is now stable in the current implementation.
+- MVP (Parts 1-10) completed: planning, Docker scaffold, frontend serving, auth, database, board APIs, frontend-backend integration, OpenRouter connectivity, AI structured outputs, AI sidebar
+- Iteration 1: JWT auth replacing hardcoded credentials, multi-user registration/login, multi-board support, card priority/due-date/labels
+- Iteration 2: Custom columns, card comments, card detail modal, profile management, search/filter, board dashboard improvements
+- Current status: Feature-complete for current scope. All documentation updated.
