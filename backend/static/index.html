@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Management MVP</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background: #f5f9ff;
+        color: #032147;
+        margin: 0;
+        padding: 2rem;
+      }
+      .card {
+        max-width: 720px;
+        margin: 0 auto;
+        background: white;
+        border: 1px solid #dbe7f7;
+        border-radius: 12px;
+        padding: 1.5rem;
+        box-shadow: 0 8px 20px rgba(3, 33, 71, 0.08);
+      }
+      h1 {
+        margin-top: 0;
+      }
+      code {
+        background: #eef4ff;
+        padding: 0.2rem 0.4rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Hello from FastAPI in Docker</h1>
+      <p>This is the temporary static page for scaffolding validation.</p>
+      <p>API response from <code>/api/hello</code>:</p>
+      <pre id="api-result">Loading...</pre>
+    </main>
+
+    <script>
+      fetch('/api/hello')
+        .then((response) => response.json())
+        .then((json) => {
+          document.getElementById('api-result').textContent = JSON.stringify(json, null, 2);
+        })
+        .catch((error) => {
+          document.getElementById('api-result').textContent = `Error: ${error}`;
+        });
+    </script>
+  </body>
+</html>

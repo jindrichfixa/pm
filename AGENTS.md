@@ -46,8 +46,27 @@ A working MVP of the frontend has been built and is already in frontend. This is
 2. Keep it simple - NEVER over-engineer, ALWAYS simplify, NO unnecessary defensive programming. No extra features - focus on simplicity.
 3. Be concise. Keep README minimal. IMPORTANT: no emojis ever
 4. When hitting issues, always identify root cause before trying a fix. Do not guess. Prove with evidence, then fix the root cause.
+5. Testing expectations must be pragmatic: target 80% coverage for meaningful changed runtime code when it adds value, but do not add or run tests purely to chase metrics.
 
 ## Working documentation
 
 All documents for planning and executing this project will be in the docs/ directory.
 Please review the docs/PLAN.md document before proceeding.
+
+## Progress snapshot (as of 2026-02-26)
+
+- Parts completed:
+	- Part 1 (planning + docs baseline)
+	- Part 2 (Docker + FastAPI scaffold + scripts)
+	- Part 3 (frontend static build served by backend)
+	- Part 4 (MVP login/logout gate)
+	- Part 5 (database design proposal + signoff)
+	- Part 6 (backend SQLite persistence + board APIs)
+	- Part 7 (frontend board wired to backend persistence)
+	- Part 8 (OpenRouter connectivity from backend)
+	- Part 9 (AI structured output + safe board persistence)
+	- Part 10 (frontend AI sidebar + board refresh)
+- Current status:
+	- MVP feature flow is implemented end-to-end (login, board CRUD, AI sidebar, AI-driven board updates).
+	- Backend enforces fixed five-column board structure and rejects invalid AI board updates.
+	- E2E can run against Next dev server or Docker stack (`E2E_BASE_URL=http://127.0.0.1:8000`); drag-and-drop behavior is now stable in the current implementation.

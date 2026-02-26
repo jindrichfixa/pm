@@ -21,6 +21,9 @@ export const KanbanColumn = ({
   onDeleteCard,
 }: KanbanColumnProps) => {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
+  const { setNodeRef: setEmptyDropRef, isOver: isEmptyOver } = useDroppable({
+    id: `${column.id}__empty`,
+  });
 
   return (
     <section
@@ -58,7 +61,14 @@ export const KanbanColumn = ({
           ))}
         </SortableContext>
         {cards.length === 0 && (
-          <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--stroke)] px-3 py-6 text-center text-xs font-semibold uppercase tracking-[0.2em] text-[var(--gray-text)]">
+          <div
+            ref={setEmptyDropRef}
+            className={clsx(
+              "flex flex-1 items-center justify-center rounded-2xl border border-dashed border-[var(--stroke)] px-3 py-6 text-center text-xs font-semibold uppercase tracking-[0.2em] text-[var(--gray-text)] transition",
+              isEmptyOver && "ring-2 ring-[var(--accent-yellow)]"
+            )}
+            data-testid={`empty-drop-${column.id}`}
+          >
             Drop a card here
           </div>
         )}

@@ -1,31 +1,112 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
+  pointerWithin,
   useSensor,
   useSensors,
-  closestCorners,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
+import { AiSidebar, type ChatItem } from "@/components/AiSidebar";
 import { createId, initialData, moveCard, type BoardData } from "@/lib/kanban";
+import { fetchBoard, saveBoard, sendChatMessage } from "@/lib/boardApi";
+
+const EXPECTED_COLUMN_IDS = [
+  "col-backlog",
+  "col-discovery",
+  "col-progress",
+  "col-review",
+  "col-done",
+];
+
+function isValidBoard(board: unknown): board is BoardData {
+  if (!board || typeof board !== "object") return false;
+  const b = board as Record<string, unknown>;
+  if (!Array.isArray(b.columns) || typeof b.cards !== "object" || !b.cards) return false;
+  const ids = b.columns.map((c: { id?: string }) => c.id);
+  if (JSON.stringify(ids) !== JSON.stringify(EXPECTED_COLUMN_IDS)) return false;
+  const cards = b.cards as Record<string, unknown>;
+  for (const col of b.columns as { cardIds?: string[] }[]) {
+    if (!Array.isArray(col.cardIds)) return false;
+    for (const cardId of col.cardIds) {
+      if (!(cardId in cards)) return false;
+    }
+  }
+  return true;
+}
 
 export const KanbanBoard = () => {
-  const [board, setBoard] = useState<BoardData>(() => initialData);
+  const [board, setBoard] = useState<BoardData | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [boardError, setBoardError] = useState<string>("");
+  const [chatError, setChatError] = useState<string>("");
+  const [chatMessages, setChatMessages] = useState<ChatItem[]>([]);
+  const [isSendingChat, setIsSendingChat] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
     })
   );
 
-  const cardsById = useMemo(() => board.cards, [board.cards]);
+  const renameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const load = async () => {
+      setIsLoading(true);
+      setBoardError("");
+      try {
+        const nextBoard = await fetchBoard();
+        if (!isMounted) {
+          return;
+        }
+        setBoard(nextBoard);
+      } catch (err) {
+        if (!isMounted) {
+          return;
+        }
+        setBoard(initialData);
+        setBoardError(
+          err instanceof Error ? err.message : "Failed to load board"
+        );
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const cardsById = useMemo(() => board?.cards ?? {}, [board]);
+
+  const persistBoard = useCallback(async (nextBoard: BoardData) => {
+    try {
+      await saveBoard(nextBoard);
+      setBoardError("");
+    } catch (err) {
+      setBoardError(err instanceof Error ? err.message : "Failed to save board");
+    }
+  }, []);
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveCardId(event.active.id as string);
@@ -35,44 +116,82 @@ export const KanbanBoard = () => {
     const { active, over } = event;
     setActiveCardId(null);
 
-    if (!over || active.id === over.id) {
+    if (!board || !over || active.id === over.id) {
       return;
     }
 
-    setBoard((prev) => ({
-      ...prev,
-      columns: moveCard(prev.columns, active.id as string, over.id as string),
-    }));
+    setBoard((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      const nextBoard = {
+        ...prev,
+        columns: moveCard(prev.columns, active.id as string, over.id as string),
+      };
+      void persistBoard(nextBoard);
+      return nextBoard;
+    });
   };
 
-  const handleRenameColumn = (columnId: string, title: string) => {
-    setBoard((prev) => ({
-      ...prev,
-      columns: prev.columns.map((column) =>
-        column.id === columnId ? { ...column, title } : column
-      ),
-    }));
-  };
+  const handleRenameColumn = useCallback(
+    (columnId: string, title: string) => {
+      setBoard((prev) => {
+        if (!prev) {
+          return prev;
+        }
+
+        const nextBoard = {
+          ...prev,
+          columns: prev.columns.map((column) =>
+            column.id === columnId ? { ...column, title } : column
+          ),
+        };
+
+        if (renameTimerRef.current) {
+          clearTimeout(renameTimerRef.current);
+        }
+        renameTimerRef.current = setTimeout(() => {
+          void persistBoard(nextBoard);
+        }, 500);
+
+        return nextBoard;
+      });
+    },
+    [persistBoard]
+  );
 
   const handleAddCard = (columnId: string, title: string, details: string) => {
     const id = createId("card");
-    setBoard((prev) => ({
-      ...prev,
-      cards: {
-        ...prev.cards,
-        [id]: { id, title, details: details || "No details yet." },
-      },
-      columns: prev.columns.map((column) =>
-        column.id === columnId
-          ? { ...column, cardIds: [...column.cardIds, id] }
-          : column
-      ),
-    }));
+    setBoard((prev) => {
+      if (!prev) {
+        return prev;
+      }
+
+      const nextBoard = {
+        ...prev,
+        cards: {
+          ...prev.cards,
+          [id]: { id, title, details: details || "No details yet." },
+        },
+        columns: prev.columns.map((column) =>
+          column.id === columnId
+            ? { ...column, cardIds: [...column.cardIds, id] }
+            : column
+        ),
+      };
+      void persistBoard(nextBoard);
+      return nextBoard;
+    });
   };
 
   const handleDeleteCard = (columnId: string, cardId: string) => {
     setBoard((prev) => {
-      return {
+      if (!prev) {
+        return prev;
+      }
+
+      const nextBoard = {
         ...prev,
         cards: Object.fromEntries(
           Object.entries(prev.cards).filter(([id]) => id !== cardId)
@@ -86,8 +205,56 @@ export const KanbanBoard = () => {
             : column
         ),
       };
+      void persistBoard(nextBoard);
+      return nextBoard;
     });
   };
+
+  const handleSendChatMessage = async (message: string) => {
+    const userMessage: ChatItem = {
+      id: createId("chat"),
+      role: "user",
+      content: message,
+    };
+    setChatMessages((prev) => [...prev, userMessage]);
+    setIsSendingChat(true);
+
+    try {
+      const response = await sendChatMessage(message);
+      const assistantMessage: ChatItem = {
+        id: createId("chat"),
+        role: "assistant",
+        content: response.assistant_message,
+      };
+
+      setChatMessages((prev) => [...prev, assistantMessage]);
+      setChatError("");
+
+      if (response.board_update && isValidBoard(response.board_update)) {
+        setBoard(response.board_update);
+      }
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Failed to send message");
+    } finally {
+      setIsSendingChat(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-[1500px] items-center justify-center px-6">
+        <p className="text-sm font-medium text-[var(--gray-text)]">Loading board...</p>
+      </main>
+    );
+  }
+
+  if (!board) {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-[1500px] items-center justify-center px-6">
+        <p className="text-sm font-medium text-[var(--secondary-purple)]">Unable to load board</p>
+      </main>
+    );
+  }
 
   const activeCard = activeCardId ? cardsById[activeCardId] : null;
 
@@ -97,6 +264,15 @@ export const KanbanBoard = () => {
       <div className="pointer-events-none absolute bottom-0 right-0 h-[520px] w-[520px] translate-x-1/4 translate-y-1/4 rounded-full bg-[radial-gradient(circle,_rgba(117,57,145,0.18)_0%,_rgba(117,57,145,0.05)_55%,_transparent_75%)]" />
 
       <main className="relative mx-auto flex min-h-screen max-w-[1500px] flex-col gap-10 px-6 pb-16 pt-12">
+        {boardError ? (
+          <p
+            role="alert"
+            className="rounded-xl border border-[var(--stroke)] bg-white px-4 py-3 text-sm font-medium text-[var(--secondary-purple)]"
+          >
+            {boardError}
+          </p>
+        ) : null}
+
         <header className="flex flex-col gap-6 rounded-[32px] border border-[var(--stroke)] bg-white/80 p-8 shadow-[var(--shadow)] backdrop-blur">
           <div className="flex flex-wrap items-start justify-between gap-6">
             <div>
@@ -133,32 +309,41 @@ export const KanbanBoard = () => {
           </div>
         </header>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCorners}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          <section className="grid gap-6 lg:grid-cols-5">
-            {board.columns.map((column) => (
-              <KanbanColumn
-                key={column.id}
-                column={column}
-                cards={column.cardIds.map((cardId) => board.cards[cardId])}
-                onRename={handleRenameColumn}
-                onAddCard={handleAddCard}
-                onDeleteCard={handleDeleteCard}
-              />
-            ))}
-          </section>
-          <DragOverlay>
-            {activeCard ? (
-              <div className="w-[260px]">
-                <KanbanCardPreview card={activeCard} />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={pointerWithin}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <section className="grid gap-6 lg:grid-cols-5">
+              {board.columns.map((column) => (
+                <KanbanColumn
+                  key={column.id}
+                  column={column}
+                  cards={column.cardIds.map((cardId) => board.cards[cardId]).filter(Boolean)}
+                  onRename={handleRenameColumn}
+                  onAddCard={handleAddCard}
+                  onDeleteCard={handleDeleteCard}
+                />
+              ))}
+            </section>
+            <DragOverlay>
+              {activeCard ? (
+                <div className="w-[260px]">
+                  <KanbanCardPreview card={activeCard} />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+
+          <AiSidebar
+            messages={chatMessages}
+            isSending={isSendingChat}
+            error={chatError}
+            onSend={handleSendChatMessage}
+          />
+        </section>
       </main>
     </div>
   );

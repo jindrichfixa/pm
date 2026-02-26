@@ -78,6 +78,12 @@ const findColumnId = (columns: Column[], id: string) => {
   if (isColumnId(columns, id)) {
     return id;
   }
+
+  const emptyZoneColumn = columns.find((column) => `${column.id}__empty` === id);
+  if (emptyZoneColumn) {
+    return emptyZoneColumn.id;
+  }
+
   return columns.find((column) => column.cardIds.includes(id))?.id;
 };
 
@@ -162,7 +168,5 @@ export const moveCard = (
 };
 
 export const createId = (prefix: string) => {
-  const randomPart = Math.random().toString(36).slice(2, 8);
-  const timePart = Date.now().toString(36);
-  return `${prefix}-${randomPart}${timePart}`;
+  return `${prefix}-${crypto.randomUUID()}`;
 };
