@@ -18,20 +18,23 @@ from ai import (
 from auth import create_token, decode_token
 from db import (
     DEFAULT_DB_PATH,
-    FIXED_COLUMN_IDS,
+    add_card_comment,
     append_chat_message,
     authenticate_user,
     create_board,
     create_user,
     delete_board,
+    delete_card_comment,
     get_board,
+    get_card_comments,
     get_chat_messages,
-    get_default_board,
     get_user_by_id,
     initialize_database,
     list_boards_for_user,
     update_board_data,
     update_board_meta,
+    update_user_display_name,
+    update_user_password,
 )
 
 
@@ -83,7 +86,7 @@ class ColumnModel(BaseModel):
 
 
 class BoardPayload(BaseModel):
-    columns: list[ColumnModel] = Field(default_factory=list, max_length=10)
+    columns: list[ColumnModel] = Field(default_factory=list, max_length=20)
     cards: dict[str, CardModel] = Field(default_factory=dict)
 
 
@@ -113,6 +116,15 @@ class UpdateBoardMetaRequest(BaseModel):
     description: str = Field(default="", max_length=_MAX_BOARD_DESC_LENGTH)
 
 
+class UpdateProfileRequest(BaseModel):
+    display_name: str = Field(min_length=1, max_length=100)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=4, max_length=200)
+
+
 class AiCheckPayload(BaseModel):
     prompt: str = Field(min_length=1, max_length=_MAX_PROMPT_LENGTH)
 
@@ -128,6 +140,10 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     assistant_message: str
     board_update: BoardPayload | None = None
+
+
+class AddCommentRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=2000)
 
 
 # --- Auth helper ---
@@ -151,12 +167,20 @@ def _get_current_user(request: Request) -> dict[str, Any]:
 
 # --- Validation helpers ---
 
-def _has_valid_fixed_columns(board: dict[str, Any]) -> bool:
+def _has_valid_columns(board: dict[str, Any]) -> bool:
+    """Check that columns exist, have unique IDs, and at least one column."""
     columns = board.get("columns")
-    if not isinstance(columns, list):
+    if not isinstance(columns, list) or len(columns) == 0:
         return False
-    actual_ids = [column.get("id") for column in columns if isinstance(column, dict)]
-    return actual_ids == FIXED_COLUMN_IDS
+    ids = []
+    for column in columns:
+        if not isinstance(column, dict):
+            return False
+        col_id = column.get("id")
+        if not col_id or not isinstance(col_id, str):
+            return False
+        ids.append(col_id)
+    return len(ids) == len(set(ids))
 
 
 def _has_valid_card_refs(board: dict[str, Any]) -> bool:
@@ -211,16 +235,16 @@ def _parse_chat_response(
     except Exception as error:
         raise HTTPException(status_code=502, detail="AI returned invalid board payload.") from error
 
-    if not _has_valid_fixed_columns(validated_board):
+    if not _has_valid_columns(validated_board):
         raise HTTPException(
             status_code=502,
-            detail="AI board_update must keep the fixed five-column structure.",
+            detail="AI board_update has invalid column structure.",
         )
 
-    if not _has_valid_fixed_columns(current_board):
+    if not _has_valid_card_refs(validated_board):
         raise HTTPException(
-            status_code=500,
-            detail="Current board is invalid. Reset board before applying AI updates.",
+            status_code=502,
+            detail="AI board_update has inconsistent card references.",
         )
 
     return assistant_message.strip(), validated_board
@@ -271,6 +295,27 @@ def get_me(request: Request) -> dict[str, Any]:
     return _get_current_user(request)
 
 
+@app.patch("/api/auth/profile")
+def update_profile(payload: UpdateProfileRequest, request: Request) -> dict[str, Any]:
+    user = _get_current_user(request)
+    updated = update_user_display_name(DEFAULT_DB_PATH, user["id"], payload.display_name)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found")
+    user["display_name"] = payload.display_name
+    return user
+
+
+@app.post("/api/auth/change-password")
+def change_password(payload: ChangePasswordRequest, request: Request) -> dict[str, str]:
+    user = _get_current_user(request)
+    success = update_user_password(
+        DEFAULT_DB_PATH, user["id"], payload.current_password, payload.new_password
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    return {"status": "ok"}
+
+
 # --- Board CRUD endpoints ---
 
 @app.get("/api/boards")
@@ -295,11 +340,6 @@ def get_board_endpoint(board_id: int, request: Request) -> dict[str, Any]:
 
     board_data, version, name, description = result
 
-    if not _has_valid_fixed_columns(board_data):
-        default = get_default_board()
-        update_board_data(DEFAULT_DB_PATH, board_id, user["id"], default)
-        board_data = default
-
     return {
         "id": board_id,
         "name": name,
@@ -314,10 +354,10 @@ def update_board_endpoint(board_id: int, payload: BoardPayload, request: Request
     user = _get_current_user(request)
     board_payload = payload.model_dump()
 
-    if not _has_valid_fixed_columns(board_payload):
+    if not _has_valid_columns(board_payload):
         raise HTTPException(
             status_code=422,
-            detail="Board must keep the fixed five-column structure.",
+            detail="Board must have at least one column with unique IDs.",
         )
 
     if not _has_valid_card_refs(board_payload):
@@ -350,6 +390,45 @@ def delete_board_endpoint(board_id: int, request: Request) -> dict[str, str]:
     return {"status": "ok"}
 
 
+# --- Card comments ---
+
+@app.get("/api/boards/{board_id}/cards/{card_id}/comments")
+def get_comments(board_id: int, card_id: str, request: Request) -> list[dict[str, Any]]:
+    user = _get_current_user(request)
+    result = get_board(DEFAULT_DB_PATH, board_id, user["id"])
+    if result is None:
+        raise HTTPException(status_code=404, detail="Board not found")
+    return get_card_comments(DEFAULT_DB_PATH, board_id, card_id)
+
+
+@app.post("/api/boards/{board_id}/cards/{card_id}/comments", status_code=201)
+def post_comment(
+    board_id: int, card_id: str, payload: AddCommentRequest, request: Request
+) -> dict[str, Any]:
+    user = _get_current_user(request)
+    comment = add_card_comment(
+        DEFAULT_DB_PATH, board_id, card_id, user["id"], payload.content
+    )
+    if comment is None:
+        raise HTTPException(status_code=404, detail="Board not found")
+    return comment
+
+
+@app.delete("/api/boards/{board_id}/cards/{card_id}/comments/{comment_id}")
+def remove_comment(
+    board_id: int, card_id: str, comment_id: int, request: Request
+) -> dict[str, str]:
+    user = _get_current_user(request)
+    # Verify user owns the board
+    result = get_board(DEFAULT_DB_PATH, board_id, user["id"])
+    if result is None:
+        raise HTTPException(status_code=404, detail="Board not found")
+    deleted = delete_card_comment(DEFAULT_DB_PATH, comment_id, user["id"])
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return {"status": "ok"}
+
+
 # --- Legacy board endpoints (backward compat for frontend during transition) ---
 
 _MVP_USERNAME = "user"
@@ -367,12 +446,6 @@ def get_board_legacy(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Board not found")
 
     board_data, _version, _name, _desc = result
-
-    if not _has_valid_fixed_columns(board_data):
-        default = get_default_board()
-        update_board_data(DEFAULT_DB_PATH, boards[0]["id"], user["id"], default)
-        return default
-
     return board_data
 
 
@@ -381,10 +454,10 @@ def put_board_legacy(payload: BoardPayload, request: Request) -> dict[str, str]:
     user = _get_current_user(request)
     board_payload = payload.model_dump()
 
-    if not _has_valid_fixed_columns(board_payload):
+    if not _has_valid_columns(board_payload):
         raise HTTPException(
             status_code=422,
-            detail="Board must keep the fixed five-column structure.",
+            detail="Board must have at least one column with unique IDs.",
         )
 
     if not _has_valid_card_refs(board_payload):

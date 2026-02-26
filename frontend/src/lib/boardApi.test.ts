@@ -10,6 +10,11 @@ import {
   saveBoardById,
   deleteBoard,
   sendChatMessageToBoard,
+  updateProfile,
+  changePassword,
+  getCardComments,
+  addCardComment,
+  deleteCardComment,
 } from "@/lib/boardApi";
 import { initialData } from "@/lib/kanban";
 
@@ -126,6 +131,83 @@ describe("boardApi", () => {
       "/api/boards/1/chat",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  // --- Card comments ---
+
+  it("getCardComments returns comment list", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([{ id: 1, card_id: "card-1", content: "Test", created_at: "2026-01-01", username: "user", display_name: "User" }]),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    const comments = await getCardComments(1, "card-1");
+    expect(comments).toHaveLength(1);
+    expect(comments[0].content).toBe("Test");
+  });
+
+  it("addCardComment sends POST and returns comment", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ id: 2, card_id: "card-1", content: "New comment", created_at: "2026-01-01", username: "user", display_name: "User" }),
+        { status: 201, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    const comment = await addCardComment(1, "card-1", "New comment");
+    expect(comment.content).toBe("New comment");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/boards/1/cards/card-1/comments",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("deleteCardComment sends DELETE", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "ok" }), { status: 200 })
+    );
+
+    await deleteCardComment(1, "card-1", 5);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/boards/1/cards/card-1/comments/5",
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
+
+  // --- Profile management ---
+
+  it("updateProfile sends PATCH and returns updated user", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ id: 1, username: "alice", display_name: "New Name" }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    const result = await updateProfile("New Name");
+    expect(result.display_name).toBe("New Name");
+  });
+
+  it("changePassword sends POST and resolves on success", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ status: "ok" }), { status: 200 })
+    );
+
+    await changePassword("oldpass", "newpass");
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/auth/change-password",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("changePassword throws on wrong current password", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: "Current password is incorrect" }), { status: 400 })
+    );
+
+    await expect(changePassword("wrong", "newpass")).rejects.toThrow("Current password is incorrect");
   });
 
   // --- Legacy endpoints ---

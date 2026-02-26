@@ -3,12 +3,15 @@ from pathlib import Path
 
 from db import (
     DEFAULT_BOARD,
+    add_card_comment,
     append_chat_message,
     authenticate_user,
     create_board,
     create_user,
     delete_board,
+    delete_card_comment,
     get_board,
+    get_card_comments,
     get_chat_messages,
     get_user_by_id,
     get_user_by_username,
@@ -273,4 +276,44 @@ def test_authenticate_nonexistent_user_returns_none() -> None:
         initialize_database(db_path)
 
         result = authenticate_user(db_path, "nobody", "password")
+        assert result is None
+
+
+def test_card_comments_crud() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "app.db"
+        initialize_database(db_path)
+
+        user = get_user_by_username(db_path, "user")
+        boards = list_boards_for_user(db_path, user["id"])
+        board_id = boards[0]["id"]
+
+        # Add comment
+        comment = add_card_comment(db_path, board_id, "card-1", user["id"], "Looks good")
+        assert comment is not None
+        assert comment["content"] == "Looks good"
+        assert comment["card_id"] == "card-1"
+        assert comment["username"] == "user"
+
+        # Get comments
+        comments = get_card_comments(db_path, board_id, "card-1")
+        assert len(comments) == 1
+        assert comments[0]["content"] == "Looks good"
+
+        # Delete comment
+        deleted = delete_card_comment(db_path, comment["id"], user["id"])
+        assert deleted is True
+
+        # Verify gone
+        comments = get_card_comments(db_path, board_id, "card-1")
+        assert len(comments) == 0
+
+
+def test_card_comment_on_nonexistent_board_returns_none() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "app.db"
+        initialize_database(db_path)
+
+        user = get_user_by_username(db_path, "user")
+        result = add_card_comment(db_path, 9999, "card-1", user["id"], "nope")
         assert result is None

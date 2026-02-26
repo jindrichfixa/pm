@@ -3,14 +3,17 @@
 import { FormEvent, useEffect, useState } from "react";
 import type { BoardMeta } from "@/lib/boardApi";
 import { listBoards, createBoard, deleteBoard } from "@/lib/boardApi";
+import { ProfileSettings } from "@/components/ProfileSettings";
 
 type BoardDashboardProps = {
   onSelectBoard: (boardId: number) => void;
   onLogout: () => void;
   displayName: string;
+  username: string;
+  onDisplayNameChange: (newName: string) => void;
 };
 
-export const BoardDashboard = ({ onSelectBoard, onLogout, displayName }: BoardDashboardProps) => {
+export const BoardDashboard = ({ onSelectBoard, onLogout, displayName, username, onDisplayNameChange }: BoardDashboardProps) => {
   const [boards, setBoards] = useState<BoardMeta[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -18,6 +21,7 @@ export const BoardDashboard = ({ onSelectBoard, onLogout, displayName }: BoardDa
   const [newBoardName, setNewBoardName] = useState("");
   const [newBoardDesc, setNewBoardDesc] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
   const loadBoards = async () => {
     setIsLoading(true);
@@ -77,18 +81,32 @@ export const BoardDashboard = ({ onSelectBoard, onLogout, displayName }: BoardDa
               Signed in as <span className="font-semibold text-[var(--navy-dark)]">{displayName}</span>
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onLogout}
-            className="flex items-center gap-1.5 rounded-full border border-[var(--stroke)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:border-[var(--gray-text)] hover:text-[var(--navy-dark)]"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-            Log out
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowProfile(true)}
+              className="flex items-center gap-1.5 rounded-full border border-[var(--stroke)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:border-[var(--gray-text)] hover:text-[var(--navy-dark)]"
+              aria-label="Profile settings"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+              Profile
+            </button>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="flex items-center gap-1.5 rounded-full border border-[var(--stroke)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:border-[var(--gray-text)] hover:text-[var(--navy-dark)]"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              Log out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -201,6 +219,15 @@ export const BoardDashboard = ({ onSelectBoard, onLogout, displayName }: BoardDa
           </div>
         )}
       </main>
+
+      {showProfile && (
+        <ProfileSettings
+          displayName={displayName}
+          username={username}
+          onClose={() => setShowProfile(false)}
+          onDisplayNameChange={onDisplayNameChange}
+        />
+      )}
     </div>
   );
 };

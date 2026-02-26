@@ -15,9 +15,10 @@ type KanbanCardProps = {
   card: Card;
   onDelete: (cardId: string) => void;
   onUpdate?: (cardId: string, updates: Partial<{ title: string; details: string; priority: string | null; due_date: string | null; labels: string[] }>) => void;
+  onOpenDetail?: (cardId: string) => void;
 };
 
-export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
+export const KanbanCard = ({ card, onDelete, onUpdate, onOpenDetail }: KanbanCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [editTitle, setEditTitle] = useState(card.title);
   const [editDetails, setEditDetails] = useState(card.details);
@@ -164,6 +165,22 @@ export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
           </div>
         </div>
         <div className="flex flex-col gap-0.5 opacity-0 transition group-hover/card:opacity-100">
+          {onOpenDetail && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenDetail(card.id);
+              }}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--gray-text)] transition hover:bg-[var(--surface)] hover:text-[var(--navy-dark)]"
+              aria-label={`View ${card.title}`}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+              </svg>
+            </button>
+          )}
           <button
             type="button"
             onClick={(e) => {

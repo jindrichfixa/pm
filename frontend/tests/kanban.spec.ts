@@ -202,6 +202,24 @@ test("sends AI chat message and reflects board update", async ({ page }) => {
   await expect(page.getByTestId("column-col-review").getByTestId("card-card-1")).toBeVisible();
 });
 
+test("adds and removes a custom column", async ({ page }) => {
+  await resetBoard(page);
+  await loginAndOpenBoard(page);
+
+  const initialColumns = await page.locator('[data-testid^="column-"]').count();
+  expect(initialColumns).toBe(5);
+
+  await page.getByLabel(/add column/i).click();
+  expect(await page.locator('[data-testid^="column-"]').count()).toBe(6);
+
+  // Delete the newly added column (last one)
+  const deleteButtons = page.getByLabel(/delete column/i);
+  const lastDelete = deleteButtons.last();
+  await lastDelete.click();
+
+  expect(await page.locator('[data-testid^="column-"]').count()).toBe(5);
+});
+
 test("moves a card to an empty column", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1200 });
   await resetBoard(page);

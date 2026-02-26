@@ -225,13 +225,22 @@ export default function Home() {
     );
   }
 
+  const handleDisplayNameChange = (newName: string) => {
+    if (user) {
+      const updatedUser = { ...user, display_name: newName };
+      setUser(updatedUser);
+      setStoredAuth(getStoredToken()!, updatedUser);
+    }
+  };
+
   // Dashboard view
   return (
     <BoardDashboard
       displayName={user?.display_name || user?.username || "user"}
+      username={user?.username || "user"}
       onLogout={handleLogout}
+      onDisplayNameChange={handleDisplayNameChange}
       onSelectBoard={(boardId) => {
-        // We need to get board name for display - just use a placeholder, the board component will load its own data
         setView({ type: "board", boardId, boardName: "Loading..." });
       }}
     />

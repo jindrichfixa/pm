@@ -140,8 +140,30 @@ def initialize_database(db_path: Path) -> None:
 
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS card_comments (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              board_id INTEGER NOT NULL,
+              card_id TEXT NOT NULL,
+              user_id INTEGER NOT NULL,
+              content TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE,
+              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_chat_messages_board_id
             ON chat_messages (board_id, id)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_card_comments_board_card
+            ON card_comments (board_id, card_id, id)
             """
         )
 
@@ -216,6 +238,34 @@ def get_user_by_id(db_path: Path, user_id: int) -> dict[str, Any] | None:
         return None
 
     return {"id": row["id"], "username": row["username"], "display_name": row["display_name"]}
+
+
+def update_user_display_name(db_path: Path, user_id: int, display_name: str) -> bool:
+    with get_connection(db_path) as connection:
+        result = connection.execute(
+            "UPDATE users SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (display_name, user_id),
+        )
+        return result.rowcount > 0
+
+
+def update_user_password(db_path: Path, user_id: int, current_password: str, new_password: str) -> bool:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if row is None:
+            return False
+
+        if not verify_password(current_password, row["password_hash"]):
+            return False
+
+        new_hash = hash_password(new_password)
+        connection.execute(
+            "UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (new_hash, user_id),
+        )
+        return True
 
 
 def get_user_by_username(db_path: Path, username: str) -> dict[str, Any] | None:
@@ -397,6 +447,85 @@ def append_chat_message(db_path: Path, board_id: int, user_id: int, role: str, c
         )
 
     return True
+
+
+# --- Card comments ---
+
+def get_card_comments(
+    db_path: Path, board_id: int, card_id: str, limit: int = 50
+) -> list[dict[str, Any]]:
+    with get_connection(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT cc.id, cc.card_id, cc.content, cc.created_at,
+                   u.username, u.display_name
+            FROM card_comments cc
+            JOIN users u ON cc.user_id = u.id
+            WHERE cc.board_id = ? AND cc.card_id = ?
+            ORDER BY cc.id DESC
+            LIMIT ?
+            """,
+            (board_id, card_id, limit),
+        ).fetchall()
+
+    comments = [
+        {
+            "id": row["id"],
+            "card_id": row["card_id"],
+            "content": row["content"],
+            "created_at": row["created_at"],
+            "username": row["username"],
+            "display_name": row["display_name"],
+        }
+        for row in rows
+    ]
+    comments.reverse()
+    return comments
+
+
+def add_card_comment(
+    db_path: Path, board_id: int, card_id: str, user_id: int, content: str
+) -> dict[str, Any] | None:
+    with get_connection(db_path) as connection:
+        # Verify the board exists and belongs to user
+        board = connection.execute(
+            "SELECT id FROM boards WHERE id = ? AND user_id = ?",
+            (board_id, user_id),
+        ).fetchone()
+        if board is None:
+            return None
+
+        cursor = connection.execute(
+            "INSERT INTO card_comments (board_id, card_id, user_id, content) VALUES (?, ?, ?, ?)",
+            (board_id, card_id, user_id, content),
+        )
+        comment_id = cursor.lastrowid
+
+        user = connection.execute(
+            "SELECT username, display_name FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+        return {
+            "id": comment_id,
+            "card_id": card_id,
+            "content": content,
+            "created_at": connection.execute(
+                "SELECT created_at FROM card_comments WHERE id = ?",
+                (comment_id,),
+            ).fetchone()["created_at"],
+            "username": user["username"] if user else "",
+            "display_name": user["display_name"] if user else "",
+        }
+
+
+def delete_card_comment(db_path: Path, comment_id: int, user_id: int) -> bool:
+    with get_connection(db_path) as connection:
+        result = connection.execute(
+            "DELETE FROM card_comments WHERE id = ? AND user_id = ?",
+            (comment_id, user_id),
+        )
+        return result.rowcount > 0
 
 
 # --- Backward-compatible aliases for the MVP single-user path ---

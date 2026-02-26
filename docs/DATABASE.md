@@ -83,6 +83,29 @@ Notes:
 - Auto-prunes to 100 messages per board.
 - Index on `(board_id, id)` for efficient retrieval.
 
+### 4) `card_comments`
+
+Stores comments on individual cards within a board.
+
+```sql
+CREATE TABLE IF NOT EXISTS card_comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  board_id INTEGER NOT NULL,
+  card_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (board_id) REFERENCES boards(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+Notes:
+- Comments scoped to board + card_id.
+- Cascade deletes when board is removed.
+- Index on `(board_id, card_id, id)` for efficient retrieval.
+- Max 2000 characters per comment.
+
 ## Card data model
 
 Cards stored in `board_json` with these fields:
@@ -115,18 +138,25 @@ On backend startup:
 
 ## API contract
 
-### Auth
+### Auth & Profile
 - `POST /api/auth/register` -> creates user, returns JWT + user
 - `POST /api/auth/login` -> authenticates, returns JWT + user
 - `GET /api/auth/me` -> returns current user info
+- `PATCH /api/auth/profile` -> update display name
+- `POST /api/auth/change-password` -> change password (requires current password)
 
 ### Board CRUD
 - `GET /api/boards` -> list user's boards (metadata only)
 - `POST /api/boards` -> create board with name/description
 - `GET /api/boards/:id` -> get board with full data
-- `PUT /api/boards/:id` -> update board data (validates structure)
+- `PUT /api/boards/:id` -> update board data (validates: at least 1 column, unique IDs, consistent card refs)
 - `PATCH /api/boards/:id/meta` -> update name/description
 - `DELETE /api/boards/:id` -> delete board and its chat messages
+
+### Card comments
+- `GET /api/boards/:id/cards/:cardId/comments` -> list comments for a card
+- `POST /api/boards/:id/cards/:cardId/comments` -> add a comment (max 2000 chars)
+- `DELETE /api/boards/:id/cards/:cardId/comments/:commentId` -> delete own comment
 
 ### Board data + Chat
 - `POST /api/boards/:id/chat` -> AI chat with board context

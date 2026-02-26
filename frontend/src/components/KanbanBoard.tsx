@@ -15,24 +15,16 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
+import { CardDetailModal } from "@/components/CardDetailModal";
 import { AiSidebar, type ChatItem } from "@/components/AiSidebar";
 import { createId, initialData, moveCard, type BoardData } from "@/lib/kanban";
 import { fetchBoardById, saveBoardById, sendChatMessageToBoard } from "@/lib/boardApi";
-
-const EXPECTED_COLUMN_IDS = [
-  "col-backlog",
-  "col-discovery",
-  "col-progress",
-  "col-review",
-  "col-done",
-];
 
 function isValidBoard(board: unknown): board is BoardData {
   if (!board || typeof board !== "object") return false;
   const b = board as Record<string, unknown>;
   if (!Array.isArray(b.columns) || typeof b.cards !== "object" || !b.cards) return false;
-  const ids = b.columns.map((c: { id?: string }) => c.id);
-  if (JSON.stringify(ids) !== JSON.stringify(EXPECTED_COLUMN_IDS)) return false;
+  if (b.columns.length === 0) return false;
   const cards = b.cards as Record<string, unknown>;
   for (const col of b.columns as { cardIds?: string[] }[]) {
     if (!Array.isArray(col.cardIds)) return false;
@@ -57,6 +49,9 @@ export const KanbanBoard = ({ boardId, boardName, onBack }: KanbanBoardProps) =>
   const [chatError, setChatError] = useState<string>("");
   const [chatMessages, setChatMessages] = useState<ChatItem[]>([]);
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterPriority, setFilterPriority] = useState<string>("");
+  const [detailCardId, setDetailCardId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -209,6 +204,43 @@ export const KanbanBoard = ({ boardId, boardName, onBack }: KanbanBoardProps) =>
     });
   };
 
+  const handleAddColumn = () => {
+    const id = createId("col");
+    setBoard((prev) => {
+      if (!prev) return prev;
+
+      const nextBoard = {
+        ...prev,
+        columns: [...prev.columns, { id, title: "New Column", cardIds: [] }],
+      };
+      void persistBoard(nextBoard);
+      return nextBoard;
+    });
+  };
+
+  const handleDeleteColumn = (columnId: string) => {
+    setBoard((prev) => {
+      if (!prev || prev.columns.length <= 1) return prev;
+
+      const column = prev.columns.find((c) => c.id === columnId);
+      if (!column) return prev;
+
+      // Remove cards that belong to this column
+      const cardIdsToRemove = new Set(column.cardIds);
+      const nextCards = Object.fromEntries(
+        Object.entries(prev.cards).filter(([id]) => !cardIdsToRemove.has(id))
+      );
+
+      const nextBoard = {
+        ...prev,
+        columns: prev.columns.filter((c) => c.id !== columnId),
+        cards: nextCards,
+      };
+      void persistBoard(nextBoard);
+      return nextBoard;
+    });
+  };
+
   const handleSendChatMessage = async (message: string) => {
     const userMessage: ChatItem = {
       id: createId("chat"),
@@ -256,6 +288,32 @@ export const KanbanBoard = ({ boardId, boardName, onBack }: KanbanBoardProps) =>
   }
 
   const activeCard = activeCardId ? cardsById[activeCardId] : null;
+
+  const matchesFilter = (cardId: string): boolean => {
+    const card = board.cards[cardId];
+    if (!card) return false;
+
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const titleMatch = card.title.toLowerCase().includes(q);
+      const detailsMatch = card.details.toLowerCase().includes(q);
+      const labelMatch = card.labels?.some((l) => l.toLowerCase().includes(q)) ?? false;
+      if (!titleMatch && !detailsMatch && !labelMatch) return false;
+    }
+
+    if (filterPriority && card.priority !== filterPriority) return false;
+
+    return true;
+  };
+
+  const hasActiveFilter = searchQuery !== "" || filterPriority !== "";
+
+  const filteredColumns = hasActiveFilter
+    ? board.columns.map((col) => ({
+        ...col,
+        cardIds: col.cardIds.filter(matchesFilter),
+      }))
+    : board.columns;
 
   return (
     <div className="relative overflow-hidden">
@@ -305,6 +363,44 @@ export const KanbanBoard = ({ boardId, boardName, onBack }: KanbanBoardProps) =>
               ))}
             </div>
           </div>
+
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <svg className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--gray-text)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search cards..."
+                className="w-[180px] rounded-lg border border-[var(--stroke)] py-1.5 pl-8 pr-3 text-xs outline-none transition focus:border-[var(--primary-blue)]"
+                aria-label="Search cards"
+              />
+            </div>
+            <select
+              value={filterPriority}
+              onChange={(e) => setFilterPriority(e.target.value)}
+              className="rounded-lg border border-[var(--stroke)] px-2 py-1.5 text-xs text-[var(--navy-dark)] outline-none transition focus:border-[var(--primary-blue)]"
+              aria-label="Filter by priority"
+            >
+              <option value="">All priorities</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            {hasActiveFilter && (
+              <button
+                type="button"
+                onClick={() => { setSearchQuery(""); setFilterPriority(""); }}
+                className="text-xs font-medium text-[var(--primary-blue)] hover:underline"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </header>
 
         <section className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1fr_280px]">
@@ -314,18 +410,35 @@ export const KanbanBoard = ({ boardId, boardName, onBack }: KanbanBoardProps) =>
             onDragStart={handleDragStart}
             onDragEnd={handleDragEnd}
           >
-            <div className="grid min-w-0 gap-3 lg:grid-cols-5">
-              {board.columns.map((column) => (
-                <KanbanColumn
-                  key={column.id}
-                  column={column}
-                  cards={column.cardIds.map((cardId) => board.cards[cardId]).filter(Boolean)}
-                  onRename={handleRenameColumn}
-                  onAddCard={handleAddCard}
-                  onDeleteCard={handleDeleteCard}
-                  onUpdateCard={handleUpdateCard}
-                />
+            <div className="flex min-w-0 gap-3 overflow-x-auto pb-2">
+              {filteredColumns.map((column) => (
+                <div key={column.id} className="w-[240px] shrink-0 lg:w-auto lg:flex-1">
+                  <KanbanColumn
+                    column={column}
+                    cards={column.cardIds.map((cardId) => board.cards[cardId]).filter(Boolean)}
+                    onRename={handleRenameColumn}
+                    onAddCard={handleAddCard}
+                    onDeleteCard={handleDeleteCard}
+                    onUpdateCard={handleUpdateCard}
+                    onDeleteColumn={board.columns.length > 1 ? handleDeleteColumn : undefined}
+                    onOpenCardDetail={setDetailCardId}
+                  />
+                </div>
               ))}
+              <div className="flex w-[240px] shrink-0 items-start lg:w-auto">
+                <button
+                  type="button"
+                  onClick={handleAddColumn}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--stroke)] bg-white/50 px-4 py-8 text-xs font-semibold uppercase tracking-wide text-[var(--gray-text)] transition hover:border-[var(--gray-text)] hover:text-[var(--navy-dark)]"
+                  aria-label="Add column"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  Add Column
+                </button>
+              </div>
             </div>
             <DragOverlay>
               {activeCard ? (
@@ -344,6 +457,16 @@ export const KanbanBoard = ({ boardId, boardName, onBack }: KanbanBoardProps) =>
           />
         </section>
       </main>
+
+      {detailCardId && board.cards[detailCardId] && (
+        <CardDetailModal
+          boardId={boardId}
+          card={board.cards[detailCardId]}
+          columnTitle={board.columns.find((c) => c.cardIds.includes(detailCardId))?.title || ""}
+          onClose={() => setDetailCardId(null)}
+          onUpdateCard={handleUpdateCard}
+        />
+      )}
     </div>
   );
 };

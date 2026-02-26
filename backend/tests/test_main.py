@@ -107,6 +107,66 @@ def test_get_me_with_valid_token(client: TestClient) -> None:
     assert response.json()["username"] == "user"
 
 
+# --- Profile management ---
+
+def test_update_profile_display_name(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.patch(
+        "/api/auth/profile",
+        json={"display_name": "Updated Name"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "Updated Name"
+
+    # Verify it persisted
+    me_resp = client.get("/api/auth/me", headers=headers)
+    assert me_resp.json()["display_name"] == "Updated Name"
+
+
+def test_update_profile_requires_auth(client: TestClient) -> None:
+    response = client.patch(
+        "/api/auth/profile",
+        json={"display_name": "Hacker"},
+    )
+    assert response.status_code == 401
+
+
+def test_change_password_success(client: TestClient) -> None:
+    # Register a fresh user for this test
+    reg_resp = client.post(
+        "/api/auth/register",
+        json={"username": "pwduser", "password": "oldpass1"},
+    )
+    token = reg_resp.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "oldpass1", "new_password": "newpass1"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    # Verify new password works
+    login_resp = client.post(
+        "/api/auth/login",
+        json={"username": "pwduser", "password": "newpass1"},
+    )
+    assert login_resp.status_code == 200
+
+
+def test_change_password_wrong_current(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    response = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "wrongpassword", "new_password": "newpass1"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "incorrect" in response.json()["detail"].lower()
+
+
 # --- Board CRUD ---
 
 def test_list_boards(client: TestClient) -> None:
@@ -208,7 +268,7 @@ def test_board_requires_auth(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_put_board_rejects_invalid_columns(client: TestClient) -> None:
+def test_put_board_accepts_custom_columns(client: TestClient) -> None:
     headers = _auth_headers(client)
     boards = client.get("/api/boards", headers=headers).json()
     board_id = boards[0]["id"]
@@ -216,7 +276,46 @@ def test_put_board_rejects_invalid_columns(client: TestClient) -> None:
     response = client.put(
         f"/api/boards/{board_id}",
         json={
-            "columns": [{"id": "col-1", "title": "Only", "cardIds": []}],
+            "columns": [
+                {"id": "col-todo", "title": "To Do", "cardIds": []},
+                {"id": "col-doing", "title": "Doing", "cardIds": []},
+                {"id": "col-done", "title": "Done", "cardIds": []},
+            ],
+            "cards": {},
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+
+def test_put_board_rejects_empty_columns(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    response = client.put(
+        f"/api/boards/{board_id}",
+        json={
+            "columns": [],
+            "cards": {},
+        },
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_put_board_rejects_duplicate_column_ids(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    response = client.put(
+        f"/api/boards/{board_id}",
+        json={
+            "columns": [
+                {"id": "col-1", "title": "First", "cardIds": []},
+                {"id": "col-1", "title": "Duplicate", "cardIds": []},
+            ],
             "cards": {},
         },
         headers=headers,
@@ -465,6 +564,87 @@ def test_card_with_priority_and_due_date(client: TestClient) -> None:
     assert card["priority"] == "high"
     assert card["due_date"] == "2026-03-15"
     assert card["labels"] == ["frontend", "urgent"]
+
+
+# --- Card comments ---
+
+def test_add_and_get_comments(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    # Add a comment
+    resp = client.post(
+        f"/api/boards/{board_id}/cards/card-1/comments",
+        json={"content": "This needs attention"},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    comment = resp.json()
+    assert comment["content"] == "This needs attention"
+    assert comment["card_id"] == "card-1"
+    assert "id" in comment
+    assert "created_at" in comment
+
+    # Get comments
+    get_resp = client.get(
+        f"/api/boards/{board_id}/cards/card-1/comments",
+        headers=headers,
+    )
+    assert get_resp.status_code == 200
+    comments = get_resp.json()
+    assert len(comments) >= 1
+    assert comments[-1]["content"] == "This needs attention"
+
+
+def test_delete_comment(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    # Add a comment
+    resp = client.post(
+        f"/api/boards/{board_id}/cards/card-1/comments",
+        json={"content": "To be deleted"},
+        headers=headers,
+    )
+    comment_id = resp.json()["id"]
+
+    # Delete it
+    del_resp = client.delete(
+        f"/api/boards/{board_id}/cards/card-1/comments/{comment_id}",
+        headers=headers,
+    )
+    assert del_resp.status_code == 200
+
+    # Verify it's gone
+    get_resp = client.get(
+        f"/api/boards/{board_id}/cards/card-1/comments",
+        headers=headers,
+    )
+    comment_ids = [c["id"] for c in get_resp.json()]
+    assert comment_id not in comment_ids
+
+
+def test_comment_requires_auth(client: TestClient) -> None:
+    resp = client.post(
+        "/api/boards/1/cards/card-1/comments",
+        json={"content": "Unauthorized"},
+    )
+    assert resp.status_code == 401
+
+
+def test_comment_rejects_oversized_content(client: TestClient) -> None:
+    headers = _auth_headers(client)
+    boards = client.get("/api/boards", headers=headers).json()
+    board_id = boards[0]["id"]
+
+    resp = client.post(
+        f"/api/boards/{board_id}/cards/card-1/comments",
+        json={"content": "x" * 2001},
+        headers=headers,
+    )
+    assert resp.status_code == 422
 
 
 # --- User isolation ---

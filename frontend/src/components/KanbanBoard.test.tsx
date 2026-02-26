@@ -184,6 +184,91 @@ describe("KanbanBoard", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
   });
 
+  it("adds a new column", async () => {
+    render(<KanbanBoard {...defaultProps} />);
+    await screen.findByTestId("column-col-backlog");
+
+    const initialColumns = screen.getAllByTestId(/^column-/);
+    expect(initialColumns).toHaveLength(5);
+
+    await userEvent.click(screen.getByLabelText(/add column/i));
+    expect(screen.getAllByTestId(/^column-/)).toHaveLength(6);
+  });
+
+  it("deletes a column via delete button", async () => {
+    render(<KanbanBoard {...defaultProps} />);
+    await screen.findByTestId("column-col-backlog");
+
+    const deleteButtons = screen.getAllByLabelText(/delete column/i);
+    expect(deleteButtons.length).toBeGreaterThan(0);
+
+    await userEvent.click(deleteButtons[0]);
+    expect(screen.getAllByTestId(/^column-/)).toHaveLength(4);
+  });
+
+  it("filters cards by search query", async () => {
+    render(<KanbanBoard {...defaultProps} />);
+    await screen.findByTestId("column-col-backlog");
+
+    // Initially shows all cards
+    expect(screen.getByText("Align roadmap themes")).toBeInTheDocument();
+    expect(screen.getByText("Gather customer signals")).toBeInTheDocument();
+
+    // Search for a specific card
+    const searchInput = screen.getByLabelText(/search cards/i);
+    await userEvent.type(searchInput, "roadmap");
+
+    // Should show matching card
+    expect(screen.getByText("Align roadmap themes")).toBeInTheDocument();
+    // Should hide non-matching cards
+    expect(screen.queryByText("Gather customer signals")).not.toBeInTheDocument();
+
+    // Clear filter shows all cards again
+    await userEvent.click(screen.getByText("Clear"));
+    expect(screen.getByText("Gather customer signals")).toBeInTheDocument();
+  });
+
+  it("filters cards by priority", async () => {
+    // Mock a board with priority cards
+    vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const method = init?.method ?? "GET";
+
+      if (url === "/api/boards/1" && method === "GET") {
+        return new Response(
+          JSON.stringify({
+            id: 1, name: "Test Board", description: "", version: 1,
+            board: {
+              columns: [
+                { id: "col-backlog", title: "Backlog", cardIds: ["card-1", "card-2"] },
+              ],
+              cards: {
+                "card-1": { id: "card-1", title: "High priority task", details: "Urgent", priority: "high" },
+                "card-2": { id: "card-2", title: "Low priority task", details: "Later", priority: "low" },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+    });
+
+    render(<KanbanBoard {...defaultProps} />);
+    await screen.findByText("High priority task");
+
+    // Both cards visible initially
+    expect(screen.getByText("High priority task")).toBeInTheDocument();
+    expect(screen.getByText("Low priority task")).toBeInTheDocument();
+
+    // Filter to high priority
+    await userEvent.selectOptions(screen.getByLabelText(/filter by priority/i), "high");
+
+    expect(screen.getByText("High priority task")).toBeInTheDocument();
+    expect(screen.queryByText("Low priority task")).not.toBeInTheDocument();
+  });
+
   it("shows error when chat message fails", async () => {
     vi.spyOn(global, "fetch").mockImplementation(async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();

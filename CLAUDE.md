@@ -26,6 +26,8 @@ Project Management application: a multi-board Kanban web app with AI chat sideba
 - `frontend/src/components/BoardDashboard.tsx` -- Board list, create, delete
 - `frontend/src/components/KanbanBoard.tsx` -- Main board with drag-and-drop (takes boardId prop)
 - `frontend/src/components/KanbanCard.tsx` -- Card with inline editing, priority, due date, labels
+- `frontend/src/components/ProfileSettings.tsx` -- Profile/password management modal
+- `frontend/src/components/CardDetailModal.tsx` -- Card detail view with comments
 - `frontend/src/components/AiSidebar.tsx` -- Chat sidebar
 - `frontend/src/lib/boardApi.ts` -- API client (auth, board CRUD, chat)
 - `frontend/src/lib/auth.ts` -- JWT token/user storage in localStorage
@@ -42,6 +44,8 @@ Project Management application: a multi-board Kanban web app with AI chat sideba
 - `POST /api/auth/register` -- user registration
 - `POST /api/auth/login` -- user login
 - `GET /api/auth/me` -- current user info
+- `PATCH /api/auth/profile` -- update display name
+- `POST /api/auth/change-password` -- change password
 - `GET /api/boards` -- list user's boards
 - `POST /api/boards` -- create new board
 - `GET /api/boards/:id` -- get board with data
@@ -49,12 +53,15 @@ Project Management application: a multi-board Kanban web app with AI chat sideba
 - `PATCH /api/boards/:id/meta` -- update board name/description
 - `DELETE /api/boards/:id` -- delete board
 - `POST /api/boards/:id/chat` -- AI chat with board context
+- `GET /api/boards/:id/cards/:cardId/comments` -- list card comments
+- `POST /api/boards/:id/cards/:cardId/comments` -- add card comment
+- `DELETE /api/boards/:id/cards/:cardId/comments/:commentId` -- delete card comment
 - `POST /api/ai/check` -- simple AI prompt check
 - `GET /api/board` -- legacy: get first board (requires auth)
 - `PUT /api/board` -- legacy: update first board (requires auth)
 - `POST /api/chat` -- legacy: AI chat on first board (requires auth)
 
-**Board constraint:** Each board has exactly five fixed columns (`col-backlog`, `col-discovery`, `col-progress`, `col-review`, `col-done`). Backend rejects updates that alter this structure. Pydantic models enforce size limits on all string fields and list sizes.
+**Board constraint:** Boards support custom columns (add, rename, delete). Backend validates that boards have at least one column with unique IDs and consistent card references. Default boards start with five columns (Backlog, Discovery, In Progress, Review, Done). Maximum 20 columns per board. Pydantic models enforce size limits on all string fields and list sizes.
 
 **Card fields:** `id`, `title`, `details`, `priority` (optional: low/medium/high/critical), `due_date` (optional: ISO date string), `labels` (optional: list of strings).
 
