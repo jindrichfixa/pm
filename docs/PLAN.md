@@ -263,6 +263,34 @@ Implementation note:
 
 ---
 
+---
+
+## Post-MVP Enhancements
+
+### Iteration 1: Real Auth and Multi-Board
+
+Completed after Part 10 MVP. Key changes:
+
+- **JWT authentication**: Replaced hardcoded credentials with real user registration/login. Backend issues JWT tokens (HS256 + bcrypt). Frontend stores token in localStorage and sends Bearer header on all API calls.
+- **Multi-user support**: Registration endpoint, unique usernames, per-user board isolation.
+- **Multi-board support**: Users can create, rename, and delete multiple boards. Board dashboard shows all boards with selection.
+- **Card enhancements**: Added priority (low/medium/high/critical), due date (ISO date string), and labels (list of strings) fields to cards.
+- **Board-scoped AI chat**: Chat endpoint moved to `/api/boards/:id/chat` with per-board conversation history.
+
+### Iteration 2: Columns, Comments, and Polish
+
+Completed after Iteration 1. Key changes:
+
+- **Custom columns**: Users can add, rename, and delete columns (1-20 per board). Backend validates column uniqueness and card consistency.
+- **Card detail modal**: Full card view with all fields editable and comment thread.
+- **Card comments**: Add and delete comments on cards, stored in `card_comments` table.
+- **Profile management**: Update display name and change password via ProfileSettings modal.
+- **Search and filter**: Filter cards by text, priority, and labels in the board toolbar.
+- **Board dashboard improvements**: Better board list UI, create/delete flows, back-to-boards navigation.
+- **Documentation update**: All AGENTS.md, CLAUDE.md, README.md, and PLAN.md updated to reflect current state.
+
+---
+
 ## Execution rule
 
 Implementation proceeds part-by-part, with verification at each part, and user approval checkpoints at least after Part 1 and Part 5.
