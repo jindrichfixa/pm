@@ -1,4 +1,5 @@
 import { initialData, type BoardData } from "@/lib/kanban";
 
-export const cloneInitialData = (): BoardData =>
-  JSON.parse(JSON.stringify(initialData));
+export function cloneInitialData(): BoardData {
+  return JSON.parse(JSON.stringify(initialData));
+}

@@ -168,18 +168,14 @@ def _get_current_user(request: Request) -> dict[str, Any]:
 # --- Validation helpers ---
 
 def _has_valid_columns(board: dict[str, Any]) -> bool:
-    """Check that columns exist, have unique IDs, and at least one column."""
     columns = board.get("columns")
     if not isinstance(columns, list) or len(columns) == 0:
         return False
-    ids = []
-    for column in columns:
-        if not isinstance(column, dict):
-            return False
-        col_id = column.get("id")
-        if not col_id or not isinstance(col_id, str):
-            return False
-        ids.append(col_id)
+    ids = [col.get("id") for col in columns if isinstance(col, dict)]
+    if len(ids) != len(columns):
+        return False
+    if not all(isinstance(col_id, str) and col_id for col_id in ids):
+        return False
     return len(ids) == len(set(ids))
 
 
@@ -194,20 +190,14 @@ def _has_valid_card_refs(board: dict[str, Any]) -> bool:
         if isinstance(column, dict):
             all_card_ids.extend(column.get("cardIds", []))
 
-    if not all(card_id in cards for card_id in all_card_ids):
-        return False
-
-    if set(all_card_ids) != set(cards.keys()):
-        return False
-
-    if len(all_card_ids) != len(set(all_card_ids)):
-        return False
-
-    return True
+    return (
+        len(all_card_ids) == len(set(all_card_ids))
+        and set(all_card_ids) == set(cards.keys())
+    )
 
 
 def _parse_chat_response(
-    raw: dict[str, Any], current_board: dict[str, Any]
+    raw: dict[str, Any],
 ) -> tuple[str, dict[str, Any] | None]:
     assistant_message = raw.get("assistant_message")
     if not isinstance(assistant_message, str) or not assistant_message.strip():
@@ -270,7 +260,6 @@ def register(payload: RegisterRequest) -> AuthResponse:
     if user_id is None:
         raise HTTPException(status_code=409, detail="Username already taken")
 
-    # Create a default board for the new user
     create_board(DEFAULT_DB_PATH, user_id, "My First Board", "Default project board")
 
     token = create_token(user_id, payload.username)
@@ -349,22 +338,24 @@ def get_board_endpoint(board_id: int, request: Request) -> dict[str, Any]:
     }
 
 
-@app.put("/api/boards/{board_id}")
-def update_board_endpoint(board_id: int, payload: BoardPayload, request: Request) -> dict[str, str]:
-    user = _get_current_user(request)
-    board_payload = payload.model_dump()
-
+def _validate_board_payload(board_payload: dict[str, Any]) -> None:
     if not _has_valid_columns(board_payload):
         raise HTTPException(
             status_code=422,
             detail="Board must have at least one column with unique IDs.",
         )
-
     if not _has_valid_card_refs(board_payload):
         raise HTTPException(
             status_code=422,
             detail="Card references are inconsistent: every cardId must exist in cards and vice versa.",
         )
+
+
+@app.put("/api/boards/{board_id}")
+def update_board_endpoint(board_id: int, payload: BoardPayload, request: Request) -> dict[str, str]:
+    user = _get_current_user(request)
+    board_payload = payload.model_dump()
+    _validate_board_payload(board_payload)
 
     updated = update_board_data(DEFAULT_DB_PATH, board_id, user["id"], board_payload)
     if not updated:
@@ -419,7 +410,6 @@ def remove_comment(
     board_id: int, card_id: str, comment_id: int, request: Request
 ) -> dict[str, str]:
     user = _get_current_user(request)
-    # Verify user owns the board
     result = get_board(DEFAULT_DB_PATH, board_id, user["id"])
     if result is None:
         raise HTTPException(status_code=404, detail="Board not found")
@@ -429,10 +419,7 @@ def remove_comment(
     return {"status": "ok"}
 
 
-# --- Legacy board endpoints (backward compat for frontend during transition) ---
-
-_MVP_USERNAME = "user"
-
+# --- Legacy board endpoints ---
 
 @app.get("/api/board")
 def get_board_legacy(request: Request) -> dict[str, Any]:
@@ -453,18 +440,7 @@ def get_board_legacy(request: Request) -> dict[str, Any]:
 def put_board_legacy(payload: BoardPayload, request: Request) -> dict[str, str]:
     user = _get_current_user(request)
     board_payload = payload.model_dump()
-
-    if not _has_valid_columns(board_payload):
-        raise HTTPException(
-            status_code=422,
-            detail="Board must have at least one column with unique IDs.",
-        )
-
-    if not _has_valid_card_refs(board_payload):
-        raise HTTPException(
-            status_code=422,
-            detail="Card references are inconsistent: every cardId must exist in cards and vice versa.",
-        )
+    _validate_board_payload(board_payload)
 
     boards = list_boards_for_user(DEFAULT_DB_PATH, user["id"])
     if not boards:
@@ -490,10 +466,10 @@ async def ai_check(payload: AiCheckPayload) -> AiCheckResponse:
     return AiCheckResponse(assistant_message=message)
 
 
-@app.post("/api/boards/{board_id}/chat", response_model=ChatResponse)
-async def chat_on_board(board_id: int, payload: ChatRequest, request: Request) -> ChatResponse:
-    user = _get_current_user(request)
-    result = get_board(DEFAULT_DB_PATH, board_id, user["id"])
+async def _handle_chat(
+    board_id: int, user_id: int, message: str
+) -> ChatResponse:
+    result = get_board(DEFAULT_DB_PATH, board_id, user_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Board not found")
 
@@ -503,7 +479,7 @@ async def chat_on_board(board_id: int, payload: ChatRequest, request: Request) -
     try:
         raw_response = await request_openrouter_structured_output(
             board=board_data,
-            user_message=payload.message,
+            user_message=message,
             conversation_history=history,
         )
     except MissingApiKeyError as error:
@@ -511,28 +487,32 @@ async def chat_on_board(board_id: int, payload: ChatRequest, request: Request) -
     except OpenRouterUpstreamError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
 
-    assistant_message, board_update = _parse_chat_response(raw_response, board_data)
+    assistant_message, board_update = _parse_chat_response(raw_response)
 
-    append_chat_message(DEFAULT_DB_PATH, board_id, user["id"], "user", payload.message)
-    append_chat_message(DEFAULT_DB_PATH, board_id, user["id"], "assistant", assistant_message)
+    append_chat_message(DEFAULT_DB_PATH, board_id, user_id, "user", message)
+    append_chat_message(DEFAULT_DB_PATH, board_id, user_id, "assistant", assistant_message)
 
     if board_update is not None:
         updated = update_board_data(
-            DEFAULT_DB_PATH, board_id, user["id"], board_update, expected_version=version_before
+            DEFAULT_DB_PATH, board_id, user_id, board_update, expected_version=version_before
         )
         if not updated:
             raise HTTPException(
                 status_code=409,
                 detail="Board was modified while AI was processing. Please retry.",
             )
+        return ChatResponse(
+            assistant_message=assistant_message,
+            board_update=BoardPayload.model_validate(board_update),
+        )
 
-    if board_update is None:
-        return ChatResponse(assistant_message=assistant_message, board_update=None)
+    return ChatResponse(assistant_message=assistant_message, board_update=None)
 
-    return ChatResponse(
-        assistant_message=assistant_message,
-        board_update=BoardPayload.model_validate(board_update),
-    )
+
+@app.post("/api/boards/{board_id}/chat", response_model=ChatResponse)
+async def chat_on_board(board_id: int, payload: ChatRequest, request: Request) -> ChatResponse:
+    user = _get_current_user(request)
+    return await _handle_chat(board_id, user["id"], payload.message)
 
 
 # --- Legacy chat endpoint ---
@@ -543,48 +523,7 @@ async def chat_legacy(payload: ChatRequest, request: Request) -> ChatResponse:
     boards = list_boards_for_user(DEFAULT_DB_PATH, user["id"])
     if not boards:
         raise HTTPException(status_code=404, detail="Board not found")
-
-    board_id = boards[0]["id"]
-    result = get_board(DEFAULT_DB_PATH, board_id, user["id"])
-    if result is None:
-        raise HTTPException(status_code=404, detail="Board not found")
-
-    board_data, version_before, _name, _desc = result
-    history = get_chat_messages(DEFAULT_DB_PATH, board_id)
-
-    try:
-        raw_response = await request_openrouter_structured_output(
-            board=board_data,
-            user_message=payload.message,
-            conversation_history=history,
-        )
-    except MissingApiKeyError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
-    except OpenRouterUpstreamError as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-
-    assistant_message, board_update = _parse_chat_response(raw_response, board_data)
-
-    append_chat_message(DEFAULT_DB_PATH, board_id, user["id"], "user", payload.message)
-    append_chat_message(DEFAULT_DB_PATH, board_id, user["id"], "assistant", assistant_message)
-
-    if board_update is not None:
-        updated = update_board_data(
-            DEFAULT_DB_PATH, board_id, user["id"], board_update, expected_version=version_before
-        )
-        if not updated:
-            raise HTTPException(
-                status_code=409,
-                detail="Board was modified while AI was processing. Please retry.",
-            )
-
-    if board_update is None:
-        return ChatResponse(assistant_message=assistant_message, board_update=None)
-
-    return ChatResponse(
-        assistant_message=assistant_message,
-        board_update=BoardPayload.model_validate(board_update),
-    )
+    return await _handle_chat(boards[0]["id"], user["id"], payload.message)
 
 
 # --- Static file serving ---

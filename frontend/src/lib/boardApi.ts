@@ -28,142 +28,6 @@ export type AuthResponse = {
   user: { id: number; username: string; display_name: string };
 };
 
-const getErrorMessage = async (response: Response) => {
-  try {
-    const payload = (await response.json()) as { detail?: string };
-    return payload.detail || "Request failed";
-  } catch {
-    return "Request failed";
-  }
-};
-
-// --- Auth ---
-
-export const loginUser = async (username: string, password: string): Promise<AuthResponse> => {
-  const response = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as AuthResponse;
-};
-
-export const registerUser = async (
-  username: string,
-  password: string,
-  displayName: string
-): Promise<AuthResponse> => {
-  const response = await fetch("/api/auth/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password, display_name: displayName }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as AuthResponse;
-};
-
-// --- Board CRUD ---
-
-export const listBoards = async (): Promise<BoardMeta[]> => {
-  const response = await fetch("/api/boards", {
-    method: "GET",
-    headers: { Accept: "application/json", ...getAuthHeaders() },
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as BoardMeta[];
-};
-
-export const createBoard = async (name: string, description: string = ""): Promise<{ id: number; name: string; description: string }> => {
-  const response = await fetch("/api/boards", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-    body: JSON.stringify({ name, description }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as { id: number; name: string; description: string };
-};
-
-export const fetchBoardById = async (boardId: number): Promise<BoardDetail> => {
-  const response = await fetch(`/api/boards/${boardId}`, {
-    method: "GET",
-    headers: { Accept: "application/json", ...getAuthHeaders() },
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as BoardDetail;
-};
-
-export const saveBoardById = async (boardId: number, board: BoardData): Promise<void> => {
-  const response = await fetch(`/api/boards/${boardId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", Accept: "application/json", ...getAuthHeaders() },
-    body: JSON.stringify(board),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-};
-
-export const updateBoardMeta = async (boardId: number, name: string, description: string): Promise<void> => {
-  const response = await fetch(`/api/boards/${boardId}/meta`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-    body: JSON.stringify({ name, description }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-};
-
-export const deleteBoard = async (boardId: number): Promise<void> => {
-  const response = await fetch(`/api/boards/${boardId}`, {
-    method: "DELETE",
-    headers: { ...getAuthHeaders() },
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-};
-
-export const sendChatMessageToBoard = async (boardId: number, message: string): Promise<ChatResponse> => {
-  const response = await fetch(`/api/boards/${boardId}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json", ...getAuthHeaders() },
-    body: JSON.stringify({ message }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as ChatResponse;
-};
-
-// --- Card comments ---
-
 export type CardComment = {
   id: number;
   card_id: string;
@@ -173,109 +37,140 @@ export type CardComment = {
   display_name: string;
 };
 
-export const getCardComments = async (boardId: number, cardId: string): Promise<CardComment[]> => {
-  const response = await fetch(`/api/boards/${boardId}/cards/${cardId}/comments`, {
+async function apiRequest<T>(url: string, options: RequestInit): Promise<T> {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    let message = "Request failed";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      message = payload.detail || message;
+    } catch { /* use default message */ }
+    throw new Error(message);
+  }
+  const text = await response.text();
+  return text ? (JSON.parse(text) as T) : (undefined as T);
+}
+
+function authGet<T>(url: string): Promise<T> {
+  return apiRequest<T>(url, {
     method: "GET",
     headers: { Accept: "application/json", ...getAuthHeaders() },
   });
+}
 
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as CardComment[];
-};
-
-export const addCardComment = async (boardId: number, cardId: string, content: string): Promise<CardComment> => {
-  const response = await fetch(`/api/boards/${boardId}/cards/${cardId}/comments`, {
+function authPost<T>(url: string, body: unknown): Promise<T> {
+  return apiRequest<T>(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   });
+}
 
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
+function authPut<T>(url: string, body: unknown): Promise<T> {
+  return apiRequest<T>(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Accept: "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(body),
+  });
+}
 
-  return (await response.json()) as CardComment;
-};
+function authPatch<T>(url: string, body: unknown): Promise<T> {
+  return apiRequest<T>(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(body),
+  });
+}
 
-export const deleteCardComment = async (boardId: number, cardId: string, commentId: number): Promise<void> => {
-  const response = await fetch(`/api/boards/${boardId}/cards/${cardId}/comments/${commentId}`, {
+function authDelete(url: string): Promise<void> {
+  return apiRequest<void>(url, {
     method: "DELETE",
     headers: { ...getAuthHeaders() },
   });
+}
 
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-};
+// --- Auth ---
+
+export function loginUser(username: string, password: string): Promise<AuthResponse> {
+  return apiRequest<AuthResponse>("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function registerUser(username: string, password: string, displayName: string): Promise<AuthResponse> {
+  return apiRequest<AuthResponse>("/api/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password, display_name: displayName }),
+  });
+}
+
+// --- Board CRUD ---
+
+export function listBoards(): Promise<BoardMeta[]> {
+  return authGet<BoardMeta[]>("/api/boards");
+}
+
+export function createBoard(name: string, description: string = ""): Promise<{ id: number; name: string; description: string }> {
+  return authPost("/api/boards", { name, description });
+}
+
+export function fetchBoardById(boardId: number): Promise<BoardDetail> {
+  return authGet<BoardDetail>(`/api/boards/${boardId}`);
+}
+
+export function saveBoardById(boardId: number, board: BoardData): Promise<void> {
+  return authPut(`/api/boards/${boardId}`, board);
+}
+
+export function updateBoardMeta(boardId: number, name: string, description: string): Promise<void> {
+  return authPatch(`/api/boards/${boardId}/meta`, { name, description });
+}
+
+export function deleteBoard(boardId: number): Promise<void> {
+  return authDelete(`/api/boards/${boardId}`);
+}
+
+export function sendChatMessageToBoard(boardId: number, message: string): Promise<ChatResponse> {
+  return authPost<ChatResponse>(`/api/boards/${boardId}/chat`, { message });
+}
+
+// --- Card comments ---
+
+export function getCardComments(boardId: number, cardId: string): Promise<CardComment[]> {
+  return authGet<CardComment[]>(`/api/boards/${boardId}/cards/${cardId}/comments`);
+}
+
+export function addCardComment(boardId: number, cardId: string, content: string): Promise<CardComment> {
+  return authPost<CardComment>(`/api/boards/${boardId}/cards/${cardId}/comments`, { content });
+}
+
+export function deleteCardComment(boardId: number, cardId: string, commentId: number): Promise<void> {
+  return authDelete(`/api/boards/${boardId}/cards/${cardId}/comments/${commentId}`);
+}
 
 // --- Profile management ---
 
-export const updateProfile = async (displayName: string): Promise<{ id: number; username: string; display_name: string }> => {
-  const response = await fetch("/api/auth/profile", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-    body: JSON.stringify({ display_name: displayName }),
-  });
+export function updateProfile(displayName: string): Promise<{ id: number; username: string; display_name: string }> {
+  return authPatch("/api/auth/profile", { display_name: displayName });
+}
 
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
+export function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  return authPost("/api/auth/change-password", { current_password: currentPassword, new_password: newPassword });
+}
 
-  return (await response.json()) as { id: number; username: string; display_name: string };
-};
+// --- Legacy endpoints ---
 
-export const changePassword = async (currentPassword: string, newPassword: string): Promise<void> => {
-  const response = await fetch("/api/auth/change-password", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-  });
+export function fetchBoard(): Promise<BoardData> {
+  return authGet<BoardData>("/api/board");
+}
 
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-};
+export function saveBoard(board: BoardData): Promise<void> {
+  return authPut("/api/board", board);
+}
 
-// --- Legacy endpoints (still used during transition) ---
-
-export const fetchBoard = async (): Promise<BoardData> => {
-  const response = await fetch("/api/board", {
-    method: "GET",
-    headers: { Accept: "application/json", ...getAuthHeaders() },
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as BoardData;
-};
-
-export const saveBoard = async (board: BoardData): Promise<void> => {
-  const response = await fetch("/api/board", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", Accept: "application/json", ...getAuthHeaders() },
-    body: JSON.stringify(board),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-};
-
-export const sendChatMessage = async (message: string): Promise<ChatResponse> => {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json", ...getAuthHeaders() },
-    body: JSON.stringify({ message }),
-  });
-
-  if (!response.ok) {
-    throw new Error(await getErrorMessage(response));
-  }
-
-  return (await response.json()) as ChatResponse;
-};
+export function sendChatMessage(message: string): Promise<ChatResponse> {
+  return authPost<ChatResponse>("/api/chat", { message });
+}

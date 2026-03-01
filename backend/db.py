@@ -12,8 +12,6 @@ DEFAULT_DB_PATH = Path(
     os.environ.get("PM_DB_PATH", str(Path(__file__).resolve().parent / "data" / "app.db"))
 )
 
-FIXED_COLUMN_IDS = ["col-backlog", "col-discovery", "col-progress", "col-review", "col-done"]
-
 DEFAULT_BOARD: dict[str, Any] = {
     "columns": [
         {"id": "col-backlog", "title": "Backlog", "cardIds": ["card-1", "card-2"]},
@@ -349,27 +347,19 @@ def update_board_data(
 ) -> bool:
     with get_connection(db_path) as connection:
         board_json = json.dumps(board)
+        query = """
+            UPDATE boards
+            SET board_json = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        """
+        params: list[str | int] = [board_json, board_id, user_id]
 
         if expected_version is not None:
-            result = connection.execute(
-                """
-                UPDATE boards
-                SET board_json = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ? AND version = ?
-                """,
-                (board_json, board_id, user_id, expected_version),
-            )
-            return result.rowcount > 0
-        else:
-            result = connection.execute(
-                """
-                UPDATE boards
-                SET board_json = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND user_id = ?
-                """,
-                (board_json, board_id, user_id),
-            )
-            return result.rowcount > 0
+            query += " AND version = ?"
+            params.append(expected_version)
+
+        result = connection.execute(query, params)
+        return result.rowcount > 0
 
 
 def update_board_meta(db_path: Path, board_id: int, user_id: int, name: str, description: str) -> bool:
@@ -526,58 +516,3 @@ def delete_card_comment(db_path: Path, comment_id: int, user_id: int) -> bool:
             (comment_id, user_id),
         )
         return result.rowcount > 0
-
-
-# --- Backward-compatible aliases for the MVP single-user path ---
-
-def get_board_for_user(db_path: Path, username: str) -> tuple[dict[str, Any], int] | None:
-    """Legacy helper: get first board for username."""
-    user = get_user_by_username(db_path, username)
-    if user is None:
-        return None
-    boards = list_boards_for_user(db_path, user["id"])
-    if not boards:
-        return None
-    result = get_board(db_path, boards[0]["id"], user["id"])
-    if result is None:
-        return None
-    board_data, version, _name, _desc = result
-    return board_data, version
-
-
-def update_board_for_user(
-    db_path: Path,
-    username: str,
-    board: dict[str, Any],
-    expected_version: int | None = None,
-) -> bool:
-    """Legacy helper: update first board for username."""
-    user = get_user_by_username(db_path, username)
-    if user is None:
-        return False
-    boards = list_boards_for_user(db_path, user["id"])
-    if not boards:
-        return False
-    return update_board_data(db_path, boards[0]["id"], user["id"], board, expected_version)
-
-
-def get_chat_messages_for_user(db_path: Path, username: str, limit: int = 20) -> list[dict[str, str]]:
-    """Legacy helper: get chat for first board of username."""
-    user = get_user_by_username(db_path, username)
-    if user is None:
-        return []
-    boards = list_boards_for_user(db_path, user["id"])
-    if not boards:
-        return []
-    return get_chat_messages(db_path, boards[0]["id"], limit)
-
-
-def append_chat_message_for_user(db_path: Path, username: str, role: str, content: str) -> bool:
-    """Legacy helper: append chat for first board of username."""
-    user = get_user_by_username(db_path, username)
-    if user is None:
-        return False
-    boards = list_boards_for_user(db_path, user["id"])
-    if not boards:
-        return False
-    return append_chat_message(db_path, boards[0]["id"], user["id"], role, content)
