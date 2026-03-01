@@ -7,12 +7,12 @@ export type AuthUser = {
   display_name: string;
 };
 
-export const getStoredToken = (): string | null => {
+export function getStoredToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.localStorage.getItem(AUTH_STORAGE_KEY);
-};
+}
 
-export const getStoredUser = (): AuthUser | null => {
+export function getStoredUser(): AuthUser | null {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(USER_STORAGE_KEY);
   if (!raw) return null;
@@ -21,9 +21,9 @@ export const getStoredUser = (): AuthUser | null => {
   } catch {
     return null;
   }
-};
+}
 
-export const setStoredAuth = (token: string | null, user: AuthUser | null): void => {
+export function setStoredAuth(token: string | null, user: AuthUser | null): void {
   if (typeof window === "undefined") return;
 
   if (token && user) {
@@ -33,14 +33,14 @@ export const setStoredAuth = (token: string | null, user: AuthUser | null): void
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     window.localStorage.removeItem(USER_STORAGE_KEY);
   }
-};
+}
 
-export const isAuthenticated = (): boolean => {
+export function isAuthenticated(): boolean {
   return getStoredToken() !== null;
-};
+}
 
-export const getAuthHeaders = (): Record<string, string> => {
+export function getAuthHeaders(): Record<string, string> {
   const token = getStoredToken();
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
-};
+}

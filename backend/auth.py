@@ -20,9 +20,6 @@ def create_token(user_id: int, username: str) -> str:
 
 def decode_token(token: str) -> dict | None:
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        return None
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.InvalidTokenError:
         return None
