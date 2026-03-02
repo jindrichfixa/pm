@@ -112,6 +112,31 @@ test("moves a card between columns", async ({ page }) => {
   await expect(targetColumn.getByTestId("card-card-1")).toBeVisible();
 });
 
+test("registers a new account and sees dashboard", async ({ page }) => {
+  const uniqueUser = `e2euser_${Date.now()}`;
+  await page.goto("/");
+  await page.getByText(/need an account/i).click();
+  await expect(page.getByRole("heading", { name: /create account/i })).toBeVisible();
+
+  await page.getByLabel("Username").fill(uniqueUser);
+  await page.getByLabel("Password").fill("testpass123");
+  await page.getByLabel("Display name").fill("E2E Tester");
+  await page.getByRole("button", { name: /create account/i }).click();
+
+  await expect(page.getByText(/your boards/i)).toBeVisible();
+  // New user should have a default board
+  await expect(page.locator('[data-testid^="board-card-"]').first()).toBeVisible();
+
+  // Log out and log back in with same credentials
+  await page.getByRole("button", { name: /log out/i }).click();
+  await expect(page.getByRole("heading", { name: /sign in/i })).toBeVisible();
+
+  await page.getByLabel("Username").fill(uniqueUser);
+  await page.getByLabel("Password").fill("testpass123");
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page.getByText(/your boards/i)).toBeVisible();
+});
+
 test("rejects invalid login", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Username").fill("user");

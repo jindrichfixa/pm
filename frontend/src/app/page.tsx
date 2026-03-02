@@ -81,6 +81,7 @@ export default function Home() {
   const handleLogout = () => {
     setStoredAuth(null, null);
     setUser(null);
+    setIsRegistering(false);
     setView({ type: "login" });
   };
 

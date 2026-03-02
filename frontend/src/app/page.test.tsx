@@ -115,4 +115,17 @@ describe("Home auth flow", () => {
     expect(screen.getByRole("heading", { name: /create account/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/display name/i)).toBeInTheDocument();
   });
+
+  it("registers a new account and shows dashboard", async () => {
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.click(screen.getByText(/need an account/i));
+    await user.type(screen.getByLabelText(/username/i), "newuser");
+    await user.type(screen.getByLabelText(/password/i), "newpass");
+    await user.type(screen.getByLabelText(/display name/i), "New User");
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    expect(await screen.findByText(/your boards/i)).toBeInTheDocument();
+  });
 });
