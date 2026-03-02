@@ -143,7 +143,11 @@ Cross-platform scripts are in `scripts/` (PowerShell for Windows, bash for Mac/L
 
 ## Project Status
 
-MVP (Parts 1-10) and two iterations of enhancements are complete. See `AGENTS.md` for full feature list and `docs/PLAN.md` for the execution history.
+MVP (Parts 1-10) and two iterations of enhancements are complete. Iteration 3 verified registration/login and fixed a logout bug. See `AGENTS.md` for full feature list, `docs/PLAN.md` for execution history, and the Known Issues section in both files.
+
+## Known Issues
+
+- **AI assistant broken**: The AI chat sidebar returns "OpenRouter response did not contain valid JSON output." when users send messages. The `openai/gpt-oss-120b` model does not reliably produce the structured JSON output the backend expects. Root cause is in `backend/ai.py` response parsing. Needs investigation -- may require prompt changes, model switch, or more lenient parsing.
 
 ## DETAILED PLAN
 

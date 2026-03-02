@@ -289,6 +289,19 @@ Completed after Iteration 1. Key changes:
 - **Board dashboard improvements**: Better board list UI, create/delete flows, back-to-boards navigation.
 - **Documentation update**: All AGENTS.md, CLAUDE.md, README.md, and PLAN.md updated to reflect current state.
 
+### Iteration 3: Registration Verification and Bug Fixes
+
+Completed after Iteration 2. Key changes:
+
+- **Registration/login verified**: Full flow tested -- register new account, see dashboard with default board, logout, login again. Backend API and frontend code confirmed correct.
+- **Logout bug fixed**: After registering, logout showed "Create account" form instead of "Sign in" because `isRegistering` state was not reset in `handleLogout`. Fixed in `frontend/src/app/page.tsx`.
+- **Stale scaffold removed**: Deleted `backend/static/index.html` (Part 2 placeholder). Docker builds the real frontend into this directory. Added test fixture to `backend/tests/test_root.py` so backend tests pass without the file.
+- **Registration tests added**: Unit test in `page.test.tsx` and E2E test in `kanban.spec.ts` covering register -> dashboard -> logout -> login flow.
+
+### Known Issues
+
+- **AI assistant broken**: The AI chat sidebar returns "OpenRouter response did not contain valid JSON output." when sending messages. The `openai/gpt-oss-120b` model does not reliably produce the structured JSON output (`assistant_message` + optional `board_update`) that `backend/ai.py` expects. Needs investigation -- possible fixes include prompt changes, model switch, or more lenient response parsing.
+
 ---
 
 ## Execution rule
