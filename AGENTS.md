@@ -53,9 +53,14 @@ This project is a Project Management App. Key features:
 All documents for planning and executing this project are in the docs/ directory.
 Please review the docs/PLAN.md document before proceeding.
 
-## Progress snapshot (as of 2026-02-27)
+## Progress snapshot (as of 2026-03-03)
 
 - MVP (Parts 1-10) completed: planning, Docker scaffold, frontend serving, auth, database, board APIs, frontend-backend integration, OpenRouter connectivity, AI structured outputs, AI sidebar
 - Iteration 1: JWT auth replacing hardcoded credentials, multi-user registration/login, multi-board support, card priority/due-date/labels
 - Iteration 2: Custom columns, card comments, card detail modal, profile management, search/filter, board dashboard improvements
-- Current status: Feature-complete for current scope. All documentation updated.
+- Iteration 3: Verified registration/login flow, fixed logout bug (isRegistering state not reset), removed stale scaffold file, added registration unit + E2E tests
+- Current status: Feature-complete for current scope. AI assistant has a known issue (see below).
+
+## Known Issues
+
+- **AI assistant broken**: The AI chat sidebar returns "OpenRouter response did not contain valid JSON output." error. The `openai/gpt-oss-120b` model does not reliably return the structured JSON the backend expects (`assistant_message` + optional `board_update`). Root cause is in `backend/ai.py` response parsing. Possible fixes: prompt engineering, switching models, or more lenient/fallback parsing.
